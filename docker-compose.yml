@@ -1,0 +1,156 @@
+version: '3.9'
+
+services:
+  # Redis for distributed rate limiting and caching
+  redis:
+    image: redis:7-alpine
+    container_name: gateway-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - gateway-net
+    restart: unless-stopped
+
+  # Jaeger for distributed tracing
+  jaeger:
+    image: jaegertracing/all-in-one:1.53
+    container_name: gateway-jaeger
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    ports:
+      - "16686:16686"  # Jaeger UI
+      - "4317:4317"    # OTLP gRPC
+      - "4318:4318"    # OTLP HTTP
+    networks:
+      - gateway-net
+    restart: unless-stopped
+
+  # Prometheus for metrics
+  prometheus:
+    image: prom/prometheus:v2.48.0
+    container_name: gateway-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./deploy/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.enable-lifecycle'
+    networks:
+      - gateway-net
+    restart: unless-stopped
+
+  # Grafana for dashboards
+  grafana:
+    image: grafana/grafana:10.2.2
+    container_name: gateway-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    networks:
+      - gateway-net
+    restart: unless-stopped
+
+  # API Gateway
+  gateway:
+    build:
+      context: .
+      target: runtime
+    container_name: os-gateway
+    ports:
+      - "8080:8080"   # Main gateway port
+      - "9091:9091"   # Admin API
+    environment:
+      - GATEWAY_CONFIG=/app/config/gateway.yaml
+      - GATEWAY_LOG_LEVEL=info
+      - JWT_SECRET=your-super-secret-jwt-key-change-in-production
+      - REDIS_URL=redis://redis:6379
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4317
+    volumes:
+      - ./config:/app/config:ro
+      - gateway_logs:/var/log/gateway
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - gateway-net
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 512M
+        reservations:
+          cpus: '0.5'
+          memory: 128M
+
+  # Backend service 1
+  backend1:
+    build:
+      context: .
+      target: runtime
+    container_name: backend-1
+    command: ["/app/backend", "9001"]
+    ports:
+      - "9001:9001"
+    networks:
+      - gateway-net
+    restart: unless-stopped
+
+  # Backend service 2
+  backend2:
+    build:
+      context: .
+      target: runtime
+    container_name: backend-2
+    command: ["/app/backend", "9002"]
+    ports:
+      - "9002:9002"
+    networks:
+      - gateway-net
+    restart: unless-stopped
+
+  # Backend service 3
+  backend3:
+    build:
+      context: .
+      target: runtime
+    container_name: backend-3
+    command: ["/app/backend", "9003"]
+    ports:
+      - "9003:9003"
+    networks:
+      - gateway-net
+    restart: unless-stopped
+
+networks:
+  gateway-net:
+    driver: bridge
+
+volumes:
+  redis_data:
+  prometheus_data:
+  grafana_data:
+  gateway_logs:

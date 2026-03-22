@@ -1,0 +1,66 @@
+{{- if .Values.configMap.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "os-gateway.fullname" . }}-config
+  labels:
+    {{- include "os-gateway.labels" . | nindent 4 }}
+data:
+  gateway.yaml: |
+    server:
+      host: "0.0.0.0"
+      port: 8080
+      worker_threads: {{ .Values.gateway.workers }}
+      max_connections: 10000
+      enable_http2: true
+      enable_websocket: true
+
+    rate_limit:
+      enabled: {{ .Values.gateway.rateLimit.enabled }}
+      storage: {{ .Values.gateway.rateLimit.storage | quote }}
+      {{- if eq .Values.gateway.rateLimit.storage "redis" }}
+      redis_url: "redis://{{ .Release.Name }}-redis-master:6379"
+      {{- end }}
+      default_requests: {{ .Values.gateway.rateLimit.defaultRequests }}
+      default_window_seconds: {{ .Values.gateway.rateLimit.defaultWindowSeconds }}
+
+    jwt:
+      enabled: {{ .Values.gateway.jwt.enabled }}
+      algorithm: {{ .Values.gateway.jwt.algorithm | quote }}
+      issuer: {{ .Values.gateway.jwt.issuer | quote }}
+      verify_exp: true
+
+    cors:
+      enabled: true
+      allowed_origins:
+        - "*"
+      allow_credentials: false
+
+    compression:
+      enabled: true
+      algorithms:
+        - gzip
+        - br
+      min_size: 1024
+
+    logging:
+      level: {{ .Values.gateway.logLevel | quote }}
+      format: "json"
+      log_requests: true
+      log_responses: true
+
+    metrics:
+      enabled: true
+      path: "/metrics"
+
+    tracing:
+      enabled: {{ .Values.gateway.tracing.enabled }}
+      exporter: {{ .Values.gateway.tracing.exporter | quote }}
+      endpoint: {{ .Values.gateway.tracing.endpoint | quote }}
+      sample_rate: {{ .Values.gateway.tracing.sampleRate }}
+
+    admin:
+      enabled: true
+      path_prefix: "/admin"
+      port: 9091
+{{- end }}

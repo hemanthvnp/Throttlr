@@ -1,0 +1,11 @@
+# Security best practices for C++ API Gateway
+- Validate all incoming HTTP headers and payloads.
+- Sanitize user input before processing or logging.
+- Use secure random generators for tokens/keys.
+- Avoid logging sensitive data (e.g., JWT secrets, API keys).
+- Use HTTPS in production deployments.
+- Limit error details in responses.
+- Regularly update dependencies.
+- Use static analysis tools (cppcheck, clang-tidy).
+- Run as non-root in containers.
+- Enable resource limits in Docker.

@@ -1,0 +1,32 @@
+{
+  "server": {
+    "host": "0.0.0.0",
+    "port": 8080,
+    "worker_threads": 0,
+    "max_connections": 10000
+  },
+  "rate_limit": {
+    "enabled": true,
+    "requests": 100,
+    "window_seconds": 60
+  },
+  "jwt": {
+    "enabled": false,
+    "secret": "",
+    "issuer": "os-gateway"
+  },
+  "cors": {
+    "enabled": true,
+    "origins": ["*"]
+  },
+  "backends": [
+    {"name": "backend1", "host": "127.0.0.1", "port": 9001, "weight": 1},
+    {"name": "backend2", "host": "127.0.0.1", "port": 9002, "weight": 1},
+    {"name": "backend3", "host": "127.0.0.1", "port": 9003, "weight": 1}
+  ],
+  "routes": [
+    {"name": "api1", "path": "/api1.*", "backend": "default"},
+    {"name": "api2", "path": "/api2.*", "backend": "default"},
+    {"name": "default", "path": "/.*", "backend": "default"}
+  ]
+}

@@ -1,0 +1,216 @@
+# OS Gateway Configuration
+# Enterprise-grade API Gateway
+
+server:
+  host: "0.0.0.0"
+  port: 8080
+  worker_threads: 0  # 0 = auto (number of CPU cores)
+  max_connections: 10000
+  connection_queue_size: 1024
+  keep_alive_timeout: 60s
+  request_timeout: 30s
+  max_request_size: 10MB
+  max_header_size: 8KB
+  enable_http2: true
+  enable_websocket: true
+
+# TLS Configuration
+tls:
+  enabled: false
+  cert_file: "/etc/gateway/certs/server.crt"
+  key_file: "/etc/gateway/certs/server.key"
+  ca_file: "/etc/gateway/certs/ca.crt"  # For mTLS
+  verify_client: false  # Enable for mTLS
+  min_version: "TLSv1.2"
+  cipher_suites: "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256"
+  prefer_server_ciphers: true
+
+# Backend Servers
+backends:
+  - name: "api-v1-1"
+    host: "localhost"
+    port: 9001
+    weight: 1
+    tls: false
+    health_check_path: "/health"
+    health_check_interval: 5s
+    connect_timeout: 5s
+    read_timeout: 30s
+    write_timeout: 30s
+    max_connections: 100
+
+  - name: "api-v1-2"
+    host: "localhost"
+    port: 9002
+    weight: 1
+    tls: false
+    health_check_path: "/health"
+    health_check_interval: 5s
+
+  - name: "api-v1-3"
+    host: "localhost"
+    port: 9003
+    weight: 1
+    tls: false
+    health_check_path: "/health"
+    health_check_interval: 5s
+
+# Backend Groups
+backend_groups:
+  default:
+    - api-v1-1
+    - api-v1-2
+    - api-v1-3
+
+# Routes
+routes:
+  - name: "api-v1"
+    path_pattern: "/api/v1/.*"
+    methods: [GET, POST, PUT, DELETE, PATCH]
+    backend_group: "default"
+    load_balancer: "round_robin"
+    rate_limit_enabled: true
+    rate_limit_requests: 100
+    rate_limit_window_seconds: 60
+    max_retries: 3
+    retry_delay: 100ms
+    circuit_breaker_enabled: true
+    circuit_breaker_threshold: 5
+    circuit_breaker_timeout: 30s
+    auth_type: "jwt"
+    auth_required: false
+    cache_enabled: false
+    priority: 100
+
+  - name: "health"
+    path_pattern: "/health"
+    methods: [GET]
+    backend_group: "default"
+    rate_limit_enabled: false
+    auth_required: false
+    priority: 1
+
+  - name: "metrics"
+    path_pattern: "/metrics"
+    methods: [GET]
+    rate_limit_enabled: false
+    auth_required: false
+    priority: 1
+
+# Rate Limiting
+rate_limit:
+  enabled: true
+  storage: "memory"  # "memory" or "redis"
+  redis_url: "redis://localhost:6379"
+  default_requests: 100
+  default_window_seconds: 60
+  sync_rate: true
+  sync_interval: 1s
+
+# JWT Authentication
+jwt:
+  enabled: true
+  algorithm: "HS256"  # HS256, RS256, ES256
+  secret: "${JWT_SECRET:-your-secret-key-here}"
+  # public_key: "/etc/gateway/keys/public.pem"  # For RS256/ES256
+  # jwks_url: "https://auth.example.com/.well-known/jwks.json"
+  issuer: "os-gateway"
+  audiences: []
+  verify_exp: true
+  verify_nbf: true
+  clock_skew: 60s
+
+# CORS
+cors:
+  enabled: true
+  allowed_origins:
+    - "*"
+  allowed_methods:
+    - GET
+    - POST
+    - PUT
+    - DELETE
+    - PATCH
+    - OPTIONS
+  allowed_headers:
+    - "*"
+  exposed_headers:
+    - "X-Request-ID"
+    - "X-RateLimit-Limit"
+    - "X-RateLimit-Remaining"
+  allow_credentials: false
+  max_age: 86400
+  preflight_continue: false
+
+# Compression
+compression:
+  enabled: true
+  algorithms:
+    - gzip
+    - br
+  min_size: 1024
+  mime_types:
+    - "text/html"
+    - "text/css"
+    - "text/plain"
+    - "text/javascript"
+    - "application/json"
+    - "application/javascript"
+    - "application/xml"
+  level: 6
+
+# Logging
+logging:
+  level: "info"  # trace, debug, info, warn, error, critical
+  format: "json"  # json, text
+  file: "/var/log/gateway/gateway.log"
+  max_size_mb: 100
+  max_files: 10
+  log_requests: true
+  log_responses: true
+  log_headers: false
+  log_body: false
+  redact_headers:
+    - "Authorization"
+    - "Cookie"
+    - "X-API-Key"
+
+# Prometheus Metrics
+metrics:
+  enabled: true
+  path: "/metrics"
+  port: 0  # 0 = same as gateway port
+  latency_buckets:
+    - 0.001
+    - 0.005
+    - 0.01
+    - 0.025
+    - 0.05
+    - 0.1
+    - 0.25
+    - 0.5
+    - 1.0
+    - 2.5
+    - 5.0
+    - 10.0
+
+# Distributed Tracing
+tracing:
+  enabled: false
+  exporter: "otlp"  # otlp, jaeger, zipkin, console
+  endpoint: "http://localhost:4317"
+  service_name: "os-gateway"
+  sample_rate: 1.0
+  propagate_context: true
+  propagation_format: "w3c"  # w3c, b3
+
+# Admin API
+admin:
+  enabled: true
+  path_prefix: "/admin"
+  port: 9091
+  require_auth: true
+  api_key: "${ADMIN_API_KEY:-}"
+  allowed_ips:
+    - "127.0.0.1"
+    - "::1"

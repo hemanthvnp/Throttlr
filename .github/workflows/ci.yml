@@ -1,0 +1,305 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+  release:
+    types: [created]
+
+env:
+  BUILD_TYPE: Release
+  CONAN_VERSION: "2.0"
+
+jobs:
+  lint:
+    name: Lint & Format Check
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install clang-format
+        run: sudo apt-get install -y clang-format-17
+
+      - name: Check formatting
+        run: |
+          find include src tests -name '*.cpp' -o -name '*.hpp' | \
+            xargs clang-format-17 --dry-run --Werror
+
+      - name: Install cppcheck
+        run: sudo apt-get install -y cppcheck
+
+      - name: Run cppcheck
+        run: |
+          cppcheck --enable=warning,performance,portability \
+            --error-exitcode=1 \
+            --suppress=missingIncludeSystem \
+            -I include \
+            src/
+
+  build:
+    name: Build (${{ matrix.compiler }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler:
+          - { cc: gcc-13, cxx: g++-13 }
+          - { cc: clang-17, cxx: clang++-17 }
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            ${{ matrix.compiler.cc }} \
+            ${{ matrix.compiler.cxx }} \
+            cmake ninja-build \
+            libssl-dev libhiredis-dev libnghttp2-dev \
+            libzstd-dev libbrotli-dev
+
+      - name: Setup Conan
+        run: |
+          pip install conan==${{ env.CONAN_VERSION }}
+          conan profile detect
+
+      - name: Install Conan dependencies
+        run: |
+          conan install . --build=missing \
+            -of=build \
+            -s compiler=${{ matrix.compiler.cc == 'gcc-13' && 'gcc' || 'clang' }} \
+            -s compiler.version=${{ matrix.compiler.cc == 'gcc-13' && '13' || '17' }} \
+            -s compiler.cppstd=20 \
+            -s build_type=${{ env.BUILD_TYPE }}
+
+      - name: Configure CMake
+        env:
+          CC: ${{ matrix.compiler.cc }}
+          CXX: ${{ matrix.compiler.cxx }}
+        run: |
+          cmake -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
+            -DGATEWAY_BUILD_TESTS=ON \
+            -DGATEWAY_BUILD_BENCHMARKS=ON \
+            -DCMAKE_TOOLCHAIN_FILE=build/conan_toolchain.cmake
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-${{ matrix.compiler.cc }}
+          path: |
+            build/bin/
+            build/lib/
+
+  test:
+    name: Unit Tests
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: build-gcc-13
+          path: build/
+
+      - name: Install test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libssl-dev libhiredis-dev libnghttp2-dev
+
+      - name: Run unit tests
+        run: |
+          chmod +x build/bin/gateway_tests
+          cd build && ctest --output-on-failure
+
+  integration-test:
+    name: Integration Tests
+    needs: build
+    runs-on: ubuntu-24.04
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: build-gcc-13
+          path: build/
+
+      - name: Start test backends
+        run: |
+          chmod +x build/bin/backend
+          ./build/bin/backend 9001 &
+          ./build/bin/backend 9002 &
+          ./build/bin/backend 9003 &
+          sleep 2
+
+      - name: Start gateway
+        run: |
+          chmod +x build/bin/gateway
+          ./build/bin/gateway -c config/gateway.yaml &
+          sleep 3
+
+      - name: Run integration tests
+        run: |
+          # Health check
+          curl -f http://localhost:8080/health
+
+          # API request
+          curl -f http://localhost:8080/api/v1/test || true
+
+          # Metrics
+          curl -f http://localhost:8080/metrics
+
+      - name: Stop services
+        run: pkill -f "gateway\|backend" || true
+
+  coverage:
+    name: Code Coverage
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-13 g++-13 lcov cmake ninja-build \
+            libssl-dev libhiredis-dev libnghttp2-dev
+
+      - name: Build with coverage
+        run: |
+          cmake -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_C_COMPILER=gcc-13 \
+            -DCMAKE_CXX_COMPILER=g++-13 \
+            -DGATEWAY_BUILD_TESTS=ON \
+            -DGATEWAY_ENABLE_COVERAGE=ON
+          cmake --build build
+
+      - name: Run tests with coverage
+        run: |
+          cd build
+          ctest --output-on-failure
+          lcov --capture --directory . --output-file coverage.info
+          lcov --remove coverage.info '/usr/*' '*/tests/*' --output-file coverage.info
+
+      - name: Upload to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files: build/coverage.info
+          fail_ci_if_error: false
+
+  benchmark:
+    name: Performance Benchmarks
+    needs: build
+    runs-on: ubuntu-24.04
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: build-gcc-13
+          path: build/
+
+      - name: Run benchmarks
+        run: |
+          chmod +x build/bin/gateway_benchmarks
+          ./build/bin/gateway_benchmarks --benchmark_format=json > benchmark_results.json
+
+      - name: Store benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results
+          path: benchmark_results.json
+
+  docker:
+    name: Docker Build
+    needs: [test, integration-test]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Login to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: |
+            ${{ github.repository }}
+            ghcr.io/${{ github.repository }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64,linux/arm64
+
+  release:
+    name: Release
+    needs: [docker]
+    runs-on: ubuntu-24.04
+    if: github.event_name == 'release'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: build-gcc-13
+          path: build/
+
+      - name: Create release archive
+        run: |
+          mkdir -p release/os-gateway-${{ github.ref_name }}
+          cp -r build/bin release/os-gateway-${{ github.ref_name }}/
+          cp -r config release/os-gateway-${{ github.ref_name }}/
+          cp README.md LICENSE release/os-gateway-${{ github.ref_name }}/
+          tar -czvf os-gateway-${{ github.ref_name }}-linux-amd64.tar.gz \
+            -C release os-gateway-${{ github.ref_name }}
+
+      - name: Upload release assets
+        uses: softprops/action-gh-release@v1
+        with:
+          files: os-gateway-${{ github.ref_name }}-linux-amd64.tar.gz
