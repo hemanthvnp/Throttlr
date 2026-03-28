@@ -1,15 +1,14 @@
-# OS Gateway
+# Throttlr
 
 <p align="center">
-  <strong>Enterprise-grade C++ API Gateway</strong>
+  <strong>High-Performance API Gateway</strong>
 </p>
 
 <p align="center">
   <a href="#features">Features</a> •
   <a href="#quick-start">Quick Start</a> •
   <a href="#configuration">Configuration</a> •
-  <a href="#architecture">Architecture</a> •
-  <a href="#api">API</a> •
+  <a href="#api-reference">API</a> •
   <a href="#deployment">Deployment</a>
 </p>
 
@@ -17,307 +16,298 @@
 
 ## Overview
 
-OS Gateway is a high-performance, production-ready API Gateway built with modern C++20. It provides enterprise-grade features comparable to Kong, Envoy, and Traefik, with the performance benefits of native code.
+Throttlr is a production-ready, high-performance API Gateway built with modern C++20. It provides essential gateway features for microservices architectures including load balancing, rate limiting, circuit breaker pattern, and comprehensive observability.
 
 ## Features
 
 ### Core Capabilities
-- **High Performance**: Event-driven I/O with epoll, capable of handling 100k+ requests/second
-- **HTTP/1.1 & HTTP/2**: Full protocol support with multiplexing and server push
-- **WebSocket Proxying**: Bidirectional WebSocket support
-- **TLS/mTLS**: OpenSSL-based TLS termination with mutual TLS support
+- **High Performance**: Multi-threaded architecture with connection pooling
+- **HTTP/1.1 Support**: Full HTTP/1.1 reverse proxy with keep-alive
+- **Graceful Shutdown**: Signal handling with clean connection draining
 
 ### Load Balancing
-- **Multiple Strategies**: Round-robin, weighted round-robin, least connections, consistent hashing, IP hash
-- **Health Checking**: Automatic backend health monitoring
-- **Circuit Breaker**: Fault tolerance with configurable thresholds
-- **Connection Pooling**: Persistent backend connections with health-aware selection
+- **Round-Robin**: Even distribution across backends
+- **Weighted Round-Robin**: Priority-based traffic distribution
+- **Health Checking**: Automatic HTTP health checks with configurable intervals
+- **Connection Pooling**: Persistent backend connections with idle cleanup
 
-### Security
-- **JWT Authentication**: RS256/ES256/HS256 with JWKS rotation
-- **OAuth 2.0/OIDC**: Token introspection support
-- **API Key Authentication**: Header and query parameter extraction
-- **Rate Limiting**: Token bucket algorithm with Redis support for distributed limiting
-- **WAF**: SQL injection, XSS, and path traversal detection
-- **CORS**: Fine-grained cross-origin control
-- **Security Headers**: HSTS, CSP, X-Frame-Options, and more
+### Security & Traffic Control
+- **Rate Limiting**: Token bucket algorithm with configurable limits
+- **Circuit Breaker**: Fault tolerance with automatic recovery
+- **CORS**: Configurable cross-origin resource sharing
+- **Request Tracing**: UUID-based X-Request-ID for distributed tracing
 
 ### Observability
-- **Prometheus Metrics**: Request latency, error rates, connection pools
-- **Distributed Tracing**: OpenTelemetry with Jaeger/Zipkin export
-- **Structured Logging**: JSON-formatted logs with request context
-- **Admin API**: Runtime configuration and monitoring
-
-### Advanced Features
-- **Request/Response Transformation**: Header manipulation, URL rewriting
-- **Caching**: In-memory LRU and Redis-backed response caching
-- **Compression**: gzip and Brotli support
-- **Hot Reload**: Configuration updates without restart
+- **Prometheus Metrics**: `/metrics` endpoint with request latency histograms
+- **Health Endpoints**: Kubernetes-ready `/health`, `/healthz`, `/ready`, `/readyz`
+- **Admin API**: Runtime statistics and backend status
+- **Access Logging**: JSON and Combined log formats
 
 ## Quick Start
 
 ### Prerequisites
 - C++20 compiler (GCC 12+ or Clang 15+)
-- CMake 3.20+
-- OpenSSL 3.0+
-- libhiredis (for Redis support)
-- libnghttp2 (for HTTP/2)
+- CMake 3.16+
+- OpenSSL
 
 ### Building from Source
 
 ```bash
 # Clone the repository
-git clone https://github.com/os-gateway/os-gateway.git
-cd os-gateway
+git clone https://github.com/yourusername/throttlr.git
+cd throttlr
 
 # Build with CMake
 mkdir build && cd build
 cmake .. -DCMAKE_BUILD_TYPE=Release
 make -j$(nproc)
 
-# Run tests
-ctest --output-on-failure
+# Start a test backend (optional)
+./bin/backend 9001 &
 
 # Start the gateway
-./bin/gateway -c ../config/gateway.yaml
+./bin/gateway -c ../config/gateway.json
 ```
 
-### Using Docker
+### Verify Installation
 
 ```bash
-# Build and run with Docker Compose
-docker-compose up -d
+# Health check
+curl http://localhost:8080/health
+# {"status":"healthy","uptime_seconds":10,"version":"2.0.0"}
 
-# Or build the image directly
-docker build -t os-gateway .
-docker run -p 8080:8080 -v $(pwd)/config:/app/config os-gateway
-```
+# Metrics
+curl http://localhost:8080/metrics
 
-### Using Helm (Kubernetes)
-
-```bash
-# Add the Helm repository
-helm repo add os-gateway https://charts.os-gateway.io
-
-# Install with default values
-helm install my-gateway os-gateway/os-gateway
-
-# Or with custom values
-helm install my-gateway os-gateway/os-gateway -f values.yaml
+# Admin stats
+curl http://localhost:8080/_admin/stats
 ```
 
 ## Configuration
 
-OS Gateway uses YAML configuration. See `config/gateway.yaml` for a complete example.
+Throttlr uses JSON configuration. See `config/gateway.json` for a complete example.
 
 ### Basic Configuration
 
-```yaml
-server:
-  host: "0.0.0.0"
-  port: 8080
-  worker_threads: 0  # 0 = auto (CPU cores)
-  enable_http2: true
-
-backends:
-  - name: "api-server-1"
-    host: "10.0.0.1"
-    port: 8080
-    weight: 1
-    health_check_path: "/health"
-
-routes:
-  - name: "api-v1"
-    path_pattern: "/api/v1/.*"
-    backend_group: "default"
-    load_balancer: "round_robin"
-    rate_limit_requests: 100
-    rate_limit_window_seconds: 60
+```json
+{
+  "server": {
+    "host": "0.0.0.0",
+    "port": 8080,
+    "worker_threads": 0,
+    "max_connections": 10000
+  },
+  "rate_limit": {
+    "enabled": true,
+    "requests": 100,
+    "window_seconds": 60
+  },
+  "cors": {
+    "enabled": true,
+    "origins": ["*"]
+  },
+  "backends": [
+    {"name": "backend1", "host": "127.0.0.1", "port": 9001, "weight": 1},
+    {"name": "backend2", "host": "127.0.0.1", "port": 9002, "weight": 1}
+  ],
+  "routes": [
+    {"name": "api", "path": "/api/.*", "backend": "default"},
+    {"name": "default", "path": "/.*", "backend": "default"}
+  ]
+}
 ```
 
-### Rate Limiting
+### Configuration Options
 
-```yaml
-rate_limit:
-  enabled: true
-  storage: "redis"
-  redis_url: "redis://localhost:6379"
-  default_requests: 100
-  default_window_seconds: 60
-```
+| Option | Description | Default |
+|--------|-------------|---------|
+| `server.host` | Bind address | `0.0.0.0` |
+| `server.port` | Listen port | `8080` |
+| `server.worker_threads` | Thread pool size (0 = auto) | `0` |
+| `rate_limit.requests` | Requests per window | `100` |
+| `rate_limit.window_seconds` | Rate limit window | `60` |
+| `backends[].weight` | Load balancer weight | `1` |
+| `backends[].health_path` | Health check endpoint | `/health` |
 
-### JWT Authentication
-
-```yaml
-jwt:
-  enabled: true
-  algorithm: "RS256"
-  jwks_url: "https://auth.example.com/.well-known/jwks.json"
-  issuer: "https://auth.example.com"
-  verify_exp: true
-```
-
-### TLS Configuration
-
-```yaml
-tls:
-  enabled: true
-  cert_file: "/etc/gateway/certs/server.crt"
-  key_file: "/etc/gateway/certs/server.key"
-  ca_file: "/etc/gateway/certs/ca.crt"
-  verify_client: true  # Enable mTLS
-  min_version: "TLSv1.2"
-```
-
-## Architecture
+### Command Line Options
 
 ```
-                                    ┌─────────────────────────────────────┐
-                                    │           OS Gateway                │
-┌──────────┐                        │                                     │
-│  Client  │◄───────────────────────┤  ┌─────────────────────────────┐   │
-└──────────┘        HTTP/2          │  │      Middleware Chain       │   │
-                    TLS             │  │  ┌──────┐ ┌──────┐ ┌──────┐ │   │
-                                    │  │  │ Auth │→│ Rate │→│ WAF  │ │   │
-                                    │  │  └──────┘ └──────┘ └──────┘ │   │
-                                    │  └─────────────┬───────────────┘   │
-                                    │                │                   │
-                                    │  ┌─────────────▼───────────────┐   │
-                                    │  │        Router               │   │
-                                    │  └─────────────┬───────────────┘   │
-                                    │                │                   │
-                                    │  ┌─────────────▼───────────────┐   │
-                                    │  │     Load Balancer          │   │
-                                    │  │  ┌────┐ ┌────┐ ┌────┐       │   │
-                                    │  │  │ RR │ │ LC │ │ CH │       │   │
-                                    │  │  └────┘ └────┘ └────┘       │   │
-                                    │  └─────────────┬───────────────┘   │
-                                    │                │                   │
-                                    └────────────────┼───────────────────┘
-                                                     │
-                    ┌────────────────────────────────┼────────────────────────────────┐
-                    │                                │                                │
-             ┌──────▼──────┐                  ┌──────▼──────┐                  ┌──────▼──────┐
-             │  Backend 1  │                  │  Backend 2  │                  │  Backend 3  │
-             └─────────────┘                  └─────────────┘                  └─────────────┘
+Usage: gateway [OPTIONS]
+
+Options:
+  -c, --config <file>   Configuration file path (default: config/gateway.json)
+  -p, --port <port>     Override listening port
+  -w, --workers <num>   Number of worker threads
+  -l, --log-level <lvl> Log level: trace, debug, info, warn, error
+  -v, --version         Print version and exit
+  -h, --help            Print help message
 ```
 
 ## API Reference
 
-### Health Check
+### Health Check Endpoints
+
 ```bash
+# Liveness probe
 curl http://localhost:8080/health
+curl http://localhost:8080/healthz
+
+# Readiness probe
+curl http://localhost:8080/ready
+curl http://localhost:8080/readyz
 ```
 
-### Metrics (Prometheus)
+Response:
+```json
+{"status":"healthy","uptime_seconds":120,"version":"2.0.0"}
+```
+
+### Prometheus Metrics
+
 ```bash
 curl http://localhost:8080/metrics
 ```
 
+Available metrics:
+- `throttlr_requests_total` - Total HTTP requests
+- `throttlr_requests_success_total` - Successful requests (2xx)
+- `throttlr_requests_client_error_total` - Client errors (4xx)
+- `throttlr_requests_server_error_total` - Server errors (5xx)
+- `throttlr_rate_limited_total` - Rate limited requests
+- `throttlr_circuit_breaker_open_total` - Circuit breaker triggers
+- `throttlr_active_connections` - Current active connections
+- `throttlr_request_duration_seconds_bucket` - Latency histogram
+
 ### Admin API
+
 ```bash
-# List routes
-curl http://localhost:9091/admin/routes
+# Get runtime statistics
+curl http://localhost:8080/_admin/stats
 
-# Get backend health
-curl http://localhost:9091/admin/backends
+# Get backend status
+curl http://localhost:8080/_admin/backends
 
-# Reload configuration
-curl -X POST http://localhost:9091/admin/config/reload
+# Get route configuration
+curl http://localhost:8080/_admin/routes
+```
+
+### Response Headers
+
+All proxied responses include:
+- `X-Request-ID` - Unique request identifier (UUID)
+- `X-Response-Time` - Backend response time
+- `Server: Throttlr/2.0.0`
+- CORS headers (when enabled)
+
+## Architecture
+
+```
+┌────────────┐      ┌─────────────────────────────────────────┐
+│   Client   │─────▶│              Throttlr                   │
+└────────────┘      │                                         │
+                    │  ┌─────────────────────────────────┐    │
+                    │  │         Request Pipeline        │    │
+                    │  │  ┌──────┐  ┌──────┐  ┌───────┐  │    │
+                    │  │  │ Rate │─▶│Circuit│─▶│ CORS  │  │    │
+                    │  │  │Limit │  │Breaker│  │       │  │    │
+                    │  │  └──────┘  └──────┘  └───────┘  │    │
+                    │  └──────────────┬──────────────────┘    │
+                    │                 │                       │
+                    │  ┌──────────────▼──────────────────┐    │
+                    │  │          Load Balancer          │    │
+                    │  │   (Round-Robin / Weighted)      │    │
+                    │  └──────────────┬──────────────────┘    │
+                    │                 │                       │
+                    │  ┌──────────────▼──────────────────┐    │
+                    │  │       Connection Pool           │    │
+                    │  └──────────────┬──────────────────┘    │
+                    └─────────────────┼───────────────────────┘
+                                      │
+          ┌───────────────────────────┼───────────────────────┐
+          │                           │                       │
+   ┌──────▼──────┐             ┌──────▼──────┐         ┌──────▼──────┐
+   │  Backend 1  │             │  Backend 2  │         │  Backend N  │
+   │   (healthy) │             │  (healthy)  │         │ (unhealthy) │
+   └─────────────┘             └─────────────┘         └─────────────┘
+```
+
+## Deployment
+
+### Systemd Service
+
+```ini
+# /etc/systemd/system/throttlr.service
+[Unit]
+Description=Throttlr API Gateway
+After=network.target
+
+[Service]
+Type=simple
+User=throttlr
+ExecStart=/usr/local/bin/gateway -c /etc/throttlr/gateway.json
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+### Docker
+
+```dockerfile
+FROM ubuntu:22.04
+RUN apt-get update && apt-get install -y libssl3
+COPY build/bin/gateway /usr/local/bin/
+COPY config/gateway.json /etc/throttlr/
+EXPOSE 8080
+CMD ["gateway", "-c", "/etc/throttlr/gateway.json"]
+```
+
+### Kubernetes
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: throttlr
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: throttlr
+  template:
+    spec:
+      containers:
+      - name: throttlr
+        image: throttlr:latest
+        ports:
+        - containerPort: 8080
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 5
 ```
 
 ## Performance
 
-Benchmarks on a 4-core machine:
+Tested on a 4-core machine with 16GB RAM:
 
 | Metric | Value |
 |--------|-------|
-| Requests/sec | 150,000+ |
-| P50 Latency | 0.5ms |
-| P99 Latency | 2ms |
-| Memory (idle) | 50MB |
-| Memory (load) | 200MB |
-
-## Deployment
-
-### Kubernetes
-
-```bash
-# Install with Helm
-helm install gateway ./deploy/helm \
-  --set replicaCount=3 \
-  --set autoscaling.enabled=true \
-  --set redis.enabled=true
-```
-
-### Docker Compose
-
-```bash
-docker-compose up -d
-```
-
-### Systemd
-
-```bash
-sudo cp deploy/os-gateway.service /etc/systemd/system/
-sudo systemctl enable os-gateway
-sudo systemctl start os-gateway
-```
-
-## Monitoring
-
-### Grafana Dashboards
-
-Import the pre-built dashboards from `deploy/grafana/dashboards/`:
-- Gateway Overview
-- Request Latency
-- Error Rates
-- Backend Health
-
-### Alerts
-
-Example Prometheus alerting rules in `deploy/prometheus-alerts.yml`.
-
-## Development
-
-### Building
-
-```bash
-# Debug build with sanitizers
-cmake -B build -DCMAKE_BUILD_TYPE=Debug -DGATEWAY_ENABLE_ASAN=ON
-cmake --build build
-
-# Run tests
-cd build && ctest --output-on-failure
-
-# Run benchmarks
-./bin/gateway_benchmarks
-```
-
-### Code Style
-
-```bash
-# Format code
-find src include -name '*.cpp' -o -name '*.hpp' | xargs clang-format -i
-
-# Static analysis
-cppcheck --enable=all src/
-```
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+| Requests/sec | 50,000+ |
+| P50 Latency | < 1ms |
+| P99 Latency | < 5ms |
+| Memory (idle) | ~20MB |
+| Memory (under load) | ~100MB |
 
 ## License
 
 MIT License - see [LICENSE](LICENSE) for details.
-
-## Support
-
-- Documentation: https://docs.os-gateway.io
-- Issues: https://github.com/os-gateway/os-gateway/issues
-- Discussions: https://github.com/os-gateway/os-gateway/discussions
