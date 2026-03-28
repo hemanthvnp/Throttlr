@@ -1787,31 +1787,50 @@ private:
         char buf[8192];
         while (running_) {
             int ret = poll(fds, 2, 1000);
-            if (ret < 0) break; if (ret == 0) continue;
+            if (ret < 0) {
+                break;
+            }
+            if (ret == 0) {
+                continue;
+            }
             
             if (fds[0].revents & POLLIN) {
                 ssize_t n = client.read(buf, sizeof(buf));
-                if (n <= 0) break;
+                if (n <= 0) {
+                    break;
+                }
                 ssize_t sent = 0;
                 while (sent < n) {
                     ssize_t s = backend.write(buf + sent, n - sent);
-                    if (s <= 0) break;
+                    if (s <= 0) {
+                        break;
+                    }
                     sent += s;
                 }
-                if (sent < n) break;
+                if (sent < n) {
+                    break;
+                }
             }
             if (fds[1].revents & POLLIN) {
                 ssize_t n = backend.read(buf, sizeof(buf));
-                if (n <= 0) break;
+                if (n <= 0) {
+                    break;
+                }
                 ssize_t sent = 0;
                 while (sent < n) {
                     ssize_t s = client.write(buf + sent, n - sent);
-                    if (s <= 0) break;
+                    if (s <= 0) {
+                        break;
+                    }
                     sent += s;
                 }
-                if (sent < n) break;
+                if (sent < n) {
+                    break;
+                }
             }
-            if ((fds[0].revents & (POLLERR | POLLHUP)) || (fds[1].revents & (POLLERR | POLLHUP))) break;
+            if ((fds[0].revents & (POLLERR | POLLHUP)) || (fds[1].revents & (POLLERR | POLLHUP))) {
+                break;
+            }
         }
     }
 

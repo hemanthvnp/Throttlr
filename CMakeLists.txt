@@ -10,37 +10,54 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 # Simple compile options
 add_compile_options(-Wall -Wextra -O2)
 
-# Find required packages
+# Find required packages (Conan or System)
 find_package(Threads REQUIRED)
 find_package(OpenSSL REQUIRED)
+find_package(hiredis QUIET)
+find_package(nlohmann_json QUIET)
+find_package(spdlog QUIET)
+find_package(jwt-cpp QUIET)
 
-# Fetch nlohmann/json and spdlog
+# Fallback to FetchContent if packages aren't found (for manual builds)
 include(FetchContent)
 
-FetchContent_Declare(json
-    GIT_REPOSITORY https://github.com/nlohmann/json.git
-    GIT_TAG v3.11.3
-    GIT_SHALLOW TRUE
-)
+if(NOT nlohmann_json_FOUND)
+    FetchContent_Declare(json
+        GIT_REPOSITORY https://github.com/nlohmann/json.git
+        GIT_TAG v3.11.3
+        GIT_SHALLOW TRUE
+    )
+    FetchContent_MakeAvailable(json)
+endif()
 
-FetchContent_Declare(spdlog
-    GIT_REPOSITORY https://github.com/gabime/spdlog.git
-    GIT_TAG v1.12.0
-    GIT_SHALLOW TRUE
-)
+if(NOT spdlog_FOUND)
+    FetchContent_Declare(spdlog
+        GIT_REPOSITORY https://github.com/gabime/spdlog.git
+        GIT_TAG v1.12.0
+        GIT_SHALLOW TRUE
+    )
+    FetchContent_MakeAvailable(spdlog)
+endif()
 
+if(NOT jwt-cpp_FOUND)
+    FetchContent_Declare(jwt
+        GIT_REPOSITORY https://github.com/Thalhammer/jwt-cpp.git
+        GIT_TAG v0.6.0
+        GIT_SHALLOW TRUE
+    )
+    FetchContent_MakeAvailable(jwt)
+endif()
 
-FetchContent_Declare(jwt
-    GIT_REPOSITORY https://github.com/Thalhammer/jwt-cpp.git
-    GIT_TAG v0.6.0
-    GIT_SHALLOW TRUE
-)
-FetchContent_MakeAvailable(json spdlog jwt)
-
-
-# Main gateway executable - single file for simplicity
+# Main gateway executable
 add_executable(gateway src/gateway_main.cpp src/authenticator.cpp src/redis_rate_limiter.cpp)
 target_include_directories(gateway PRIVATE ${CMAKE_SOURCE_DIR}/include)
+
+# Harmonize library names between Conan (namespaced) and FetchContent/System (raw)
+set(HIREDIS_LIBRARIES hiredis)
+if(TARGET hiredis::hiredis)
+    set(HIREDIS_LIBRARIES hiredis::hiredis)
+endif()
+
 target_link_libraries(gateway PRIVATE
     Threads::Threads
     OpenSSL::SSL
@@ -48,7 +65,7 @@ target_link_libraries(gateway PRIVATE
     nlohmann_json::nlohmann_json
     spdlog::spdlog
     jwt-cpp::jwt-cpp
-    hiredis
+    ${HIREDIS_LIBRARIES}
 )
 
 # Backend test server

@@ -24,10 +24,12 @@ AuthResult Authenticator::authenticate(const std::string& auth_header) const {
             .with_issuer("os-gateway");
         verifier.verify(decoded);
         result.valid = true;
-        if (decoded.has_payload_claim("role"))
+        if (decoded.has_payload_claim("role")) {
             result.user_type = decoded.get_payload_claim("role").as_string();
-        if (decoded.has_payload_claim("sub"))
+        }
+        if (decoded.has_payload_claim("sub")) {
             result.user_id = decoded.get_payload_claim("sub").as_string();
+        }
     } catch (const std::exception& e) {
         result.error = e.what();
     }

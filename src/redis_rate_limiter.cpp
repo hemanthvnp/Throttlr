@@ -16,7 +16,9 @@ RedisRateLimiter::RedisRateLimiter(const std::string& host, int port) {
 }
 
 RedisRateLimiter::~RedisRateLimiter() {
-    if (ctx) redisFree(ctx);
+    if (ctx) {
+        redisFree(ctx);
+    }
 }
 
 // Lua script for atomic token bucket
@@ -38,7 +40,9 @@ const char* TOKEN_BUCKET_LUA =
     "return {allowed and 1 or 0, tokens, retry_after} ";
 
 bool RedisRateLimiter::allow(const std::string& key, int max_tokens, int window_sec, double refill_rate, double& tokens_left, int& retry_after) {
-    if (!ctx) return false;
+    if (!ctx) {
+        return false;
+    }
     long now = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
     redisReply* reply = (redisReply*)redisCommand(ctx,
         "EVAL %s 1 %s %d %f %ld %d",
