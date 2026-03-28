@@ -1,4 +1,5 @@
 #include <iostream>
+#include <string>
 #include <cstring>
 #include <unistd.h>
 #include <arpa/inet.h>
@@ -34,7 +35,8 @@ while (true) {
                            (socklen_t*)&addrlen);
 
     char buffer[1024] = {0};
-    read(client_socket, buffer, sizeof(buffer));
+    ssize_t bytes = read(client_socket, buffer, sizeof(buffer));
+    (void)bytes;
 
     std::cout << "Received request:\n" << buffer << "\n";
 

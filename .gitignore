@@ -29,3 +29,9 @@ coverage/
 # OS
 .DS_Store
 Thumbs.db
+
+# Security & SSH
+certs/
+*.pem
+*.key
+*.crt

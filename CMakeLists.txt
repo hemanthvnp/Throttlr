@@ -29,10 +29,17 @@ FetchContent_Declare(spdlog
     GIT_SHALLOW TRUE
 )
 
-FetchContent_MakeAvailable(json spdlog)
+
+FetchContent_Declare(jwt
+    GIT_REPOSITORY https://github.com/Thalhammer/jwt-cpp.git
+    GIT_TAG v0.6.0
+    GIT_SHALLOW TRUE
+)
+FetchContent_MakeAvailable(json spdlog jwt)
+
 
 # Main gateway executable - single file for simplicity
-add_executable(gateway src/gateway_main.cpp)
+add_executable(gateway src/gateway_main.cpp src/authenticator.cpp src/redis_rate_limiter.cpp)
 target_include_directories(gateway PRIVATE ${CMAKE_SOURCE_DIR}/include)
 target_link_libraries(gateway PRIVATE
     Threads::Threads
@@ -40,6 +47,8 @@ target_link_libraries(gateway PRIVATE
     OpenSSL::Crypto
     nlohmann_json::nlohmann_json
     spdlog::spdlog
+    jwt-cpp::jwt-cpp
+    hiredis
 )
 
 # Backend test server

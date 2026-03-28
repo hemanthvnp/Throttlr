@@ -1,0 +1,5 @@
+build_cmake/
+build/
+bin/
+.DS_Store
+.git/

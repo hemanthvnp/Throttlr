@@ -18,6 +18,8 @@
  */
 
 #include <nlohmann/json.hpp>
+#include "../include/authenticator.h"
+#include "../include/redis_rate_limiter.h"
 #include <spdlog/spdlog.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
 #include <spdlog/sinks/rotating_file_sink.h>
@@ -54,6 +56,8 @@
 
 #include <sys/socket.h>
 #include <sys/epoll.h>
+#include <openssl/ssl.h>
+#include <openssl/err.h>
 #include <sys/timerfd.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
@@ -133,6 +137,22 @@ std::string trim(const std::string& s) {
 std::string to_lower(std::string s) {
     std::transform(s.begin(), s.end(), s.begin(), ::tolower);
     return s;
+}
+
+
+bool resolve_host(const std::string& host, in_addr& addr) {
+    if (inet_pton(AF_INET, host.c_str(), &addr) == 1) {
+        return true;
+    }
+    struct addrinfo hints{}, *res = nullptr;
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+    if (getaddrinfo(host.c_str(), nullptr, &hints, &res) == 0 && res != nullptr) {
+        addr = reinterpret_cast<sockaddr_in*>(res->ai_addr)->sin_addr;
+        freeaddrinfo(res);
+        return true;
+    }
+    return false;
 }
 
 bool set_nonblocking(int fd) {
@@ -273,6 +293,8 @@ struct BackendConfig {
     int timeout_ms = 30000;
     int max_connections = 100;
     bool enabled = true;
+    bool tls_enabled = false;
+    std::string group = "default";
 };
 
 struct RouteConfig {
@@ -290,15 +312,22 @@ struct RouteConfig {
 
 struct RateLimitConfig {
     bool enabled = true;
+    bool tls_enabled = false;
     int requests_per_second = 100;
     int burst_size = 200;
     std::string key_type = "ip";  // ip, header, path
     std::string header_name;
+    std::string storage = "local";
+    std::string redis_host = "127.0.0.1";
+    int redis_port = 6379;
 };
 
 struct Config {
     // Server
     std::string host = "0.0.0.0";
+    bool tls_enabled = false;
+    std::string tls_cert_file = "";
+    std::string tls_key_file = "";
     uint16_t port = 8080;
     int worker_threads = 0;
     int max_connections = 10000;
@@ -309,6 +338,12 @@ struct Config {
     // Access logging
     bool access_log_enabled = true;
     std::string access_log_path;
+
+    // Service Discovery
+    std::string service_discovery_host = "";
+    int service_discovery_port = 80;
+    std::string service_discovery_path = "/registry";
+    int service_discovery_interval_ms = 10000;
     std::string access_log_format = "json";  // json or combined
 
     // Rate limiting
@@ -329,6 +364,7 @@ struct Config {
     // Admin
     bool admin_enabled = true;
     std::string admin_path = "/_admin";
+    std::string jwt_secret = "secret";
 
     static Config load(const std::string& path) {
         Config cfg;
@@ -346,13 +382,19 @@ struct Config {
             // Server settings
             if (j.contains("server")) {
                 auto& s = j["server"];
+                cfg.jwt_secret = s.value("jwt_secret", cfg.jwt_secret);
                 cfg.host = s.value("host", cfg.host);
                 cfg.port = s.value("port", cfg.port);
                 cfg.worker_threads = s.value("workers", cfg.worker_threads);
                 cfg.max_connections = s.value("max_connections", cfg.max_connections);
                 cfg.request_timeout_ms = s.value("request_timeout_ms", cfg.request_timeout_ms);
                 cfg.idle_timeout_ms = s.value("idle_timeout_ms", cfg.idle_timeout_ms);
-                cfg.max_request_size = s.value("max_request_size", cfg.max_request_size);
+                if (s.contains("max_request_size")) cfg.max_request_size = s["max_request_size"];
+                
+                if (s.contains("service_discovery_host")) cfg.service_discovery_host = s["service_discovery_host"];
+                if (s.contains("service_discovery_port")) cfg.service_discovery_port = s["service_discovery_port"];
+                if (s.contains("service_discovery_path")) cfg.service_discovery_path = s["service_discovery_path"];
+                if (s.contains("service_discovery_interval_ms")) cfg.service_discovery_interval_ms = s["service_discovery_interval_ms"];
             }
 
             // Logging
@@ -397,6 +439,7 @@ struct Config {
                     bc.timeout_ms = b.value("timeout_ms", 30000);
                     bc.max_connections = b.value("max_connections", 100);
                     bc.enabled = b.value("enabled", true);
+                    bc.group = b.value("group", "default");
                     if (!bc.name.empty()) cfg.backends.push_back(bc);
                 }
             }
@@ -430,7 +473,7 @@ struct Config {
                 cfg.admin_path = a.value("path", cfg.admin_path);
             }
 
-            spdlog::info("Configuration loaded from {}", path);
+            spdlog::info("Configuration loaded from: {}", path);
 
         } catch (const std::exception& e) {
             spdlog::error("Failed to load config: {}", e.what());
@@ -736,21 +779,32 @@ public:
 
 class RateLimiter {
 public:
-    RateLimiter(int requests_per_second, int burst_size)
-        : rate_(requests_per_second), burst_(burst_size) {}
+    RateLimiter(const RateLimitConfig& config)
+        : config_(config), rate_(config.requests_per_second), burst_(config.burst_size) {
+        if (config_.storage == "redis") {
+            redis_limiter_ = std::make_unique<RedisRateLimiter>(config_.redis_host, config_.redis_port);
+        }
+    }
 
     bool allow(const std::string& key) {
+        if (redis_limiter_) {
+            double tokens_left = 0;
+            int retry_after = 0;
+            bool allowed = redis_limiter_->allow(key, burst_, 60, rate_, tokens_left, retry_after);
+            std::lock_guard lock(mutex_);
+            redis_retry_after_[key] = retry_after;
+            return allowed;
+        }
+
         std::lock_guard lock(mutex_);
         auto now = Clock::now();
 
         auto& bucket = buckets_[key];
         if (bucket.tokens == 0 && bucket.last_update == TimePoint{}) {
-            // New bucket
             bucket.tokens = static_cast<double>(burst_);
             bucket.last_update = now;
         }
 
-        // Refill tokens
         auto elapsed = std::chrono::duration<double>(now - bucket.last_update).count();
         bucket.tokens = std::min(static_cast<double>(burst_), bucket.tokens + elapsed * rate_);
         bucket.last_update = now;
@@ -765,6 +819,9 @@ public:
 
     int get_retry_after(const std::string& key) {
         std::lock_guard lock(mutex_);
+        if (redis_limiter_) {
+            return redis_retry_after_[key];
+        }
         auto& bucket = buckets_[key];
         if (bucket.tokens >= 1.0) return 0;
         return static_cast<int>(std::ceil((1.0 - bucket.tokens) / rate_));
@@ -772,6 +829,10 @@ public:
 
     void cleanup() {
         std::lock_guard lock(mutex_);
+        if (redis_limiter_) {
+            redis_retry_after_.clear();
+            return;
+        }
         auto now = Clock::now();
         for (auto it = buckets_.begin(); it != buckets_.end();) {
             if (now - it->second.last_update > std::chrono::minutes(5)) {
@@ -788,10 +849,13 @@ private:
         TimePoint last_update{};
     };
 
+    RateLimitConfig config_;
     double rate_;
     int burst_;
     std::unordered_map<std::string, Bucket> buckets_;
+    std::unordered_map<std::string, int> redis_retry_after_;
     std::mutex mutex_;
+    std::unique_ptr<RedisRateLimiter> redis_limiter_;
 };
 
 // ============================================================================
@@ -1003,15 +1067,9 @@ private:
         addr.sin_family = AF_INET;
         addr.sin_port = htons(port_);
 
-        if (inet_pton(AF_INET, host_.c_str(), &addr.sin_addr) <= 0) {
-            // Try DNS resolution
-            struct hostent* he = gethostbyname(host_.c_str());
-            if (he) {
-                memcpy(&addr.sin_addr, he->h_addr, static_cast<size_t>(he->h_length));
-            } else {
-                close(fd);
-                return -1;
-            }
+        if (!util::resolve_host(host_, addr.sin_addr)) {
+            close(fd);
+            return -1;
         }
 
         if (connect(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0) {
@@ -1062,6 +1120,30 @@ public:
         backend->circuit = std::make_unique<CircuitBreaker>(5, 2, std::chrono::seconds(30));
 
         backends_[group].push_back(backend);
+    }
+
+    void set_backends(const std::string& group, const std::vector<BackendConfig>& configs) {
+        std::lock_guard lock(mutex_);
+        std::vector<std::shared_ptr<Backend>> new_backends;
+        for (const auto& config : configs) {
+            bool found = false;
+            for (auto& old_b : backends_[group]) {
+                if (old_b->config.name == config.name && old_b->config.host == config.host && old_b->config.port == config.port) {
+                    old_b->config = config; // update config variables
+                    new_backends.push_back(old_b);
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                auto backend = std::make_shared<Backend>();
+                backend->config = config;
+                backend->pool = std::make_unique<ConnectionPool>(config.host, config.port, config.max_connections);
+                backend->circuit = std::make_unique<CircuitBreaker>(5, 2, std::chrono::seconds(30));
+                new_backends.push_back(backend);
+            }
+        }
+        backends_[group] = std::move(new_backends);
     }
 
     std::shared_ptr<Backend> select(const std::string& group) {
@@ -1458,6 +1540,27 @@ private:
     std::shared_ptr<spdlog::logger> file_logger_;
 };
 
+// SSL Stream Wrapper
+struct Stream {
+    int fd;
+    SSL* ssl;
+    
+    Stream(int f, SSL* s = nullptr) : fd(f), ssl(s) {}
+    
+    ssize_t read(void* buf, size_t count) {
+        return ssl ? SSL_read(ssl, buf, count) : recv(fd, buf, count, 0);
+    }
+    
+    ssize_t write(const void* buf, size_t count) {
+        return ssl ? SSL_write(ssl, buf, count) : send(fd, buf, count, 0);
+    }
+};
+
+void send_response(Stream& stream, const HttpResponse& response) {
+    std::string data = response.serialize();
+    stream.write(data.c_str(), data.size());
+}
+
 // ============================================================================
 // Gateway Server
 // ============================================================================
@@ -1466,10 +1569,26 @@ class Gateway {
 public:
     explicit Gateway(Config config)
         : config_(std::move(config))
-        , rate_limiter_(config_.rate_limit.requests_per_second, config_.rate_limit.burst_size)
+        , rate_limiter_(config_.rate_limit)
         , access_logger_(config_)
         , running_(false)
         , start_time_(Clock::now()) {
+        
+        authenticator_ = std::make_unique<Authenticator>(config_.jwt_secret);
+        SSL_library_init();
+        OpenSSL_add_all_algorithms();
+        SSL_load_error_strings();
+        
+        if (config_.tls_enabled) {
+            server_ctx_ = SSL_CTX_new(TLS_server_method());
+            if (SSL_CTX_use_certificate_file(server_ctx_, config_.tls_cert_file.c_str(), SSL_FILETYPE_PEM) <= 0 ||
+                SSL_CTX_use_PrivateKey_file(server_ctx_, config_.tls_key_file.c_str(), SSL_FILETYPE_PEM) <= 0) {
+                throw std::runtime_error("Failed to load TLS certificates");
+            }
+        }
+        
+        client_ctx_ = SSL_CTX_new(TLS_client_method());
+
 
         config_.validate();
 
@@ -1477,17 +1596,15 @@ public:
         for (const auto& route : config_.routes) {
             router_.add_route(route);
         }
-        spdlog::info("Loaded {} routes", router_.route_count());
 
         // Initialize backends
         for (const auto& backend : config_.backends) {
-            load_balancer_.add_backend("default", backend);
+            load_balancer_.add_backend(backend.group, backend);
         }
-        spdlog::info("Loaded {} backends", config_.backends.size());
     }
 
     void start() {
-        spdlog::info("Starting Throttlr v2.0.0");
+        spdlog::info("Starting OS Gateway v2.0.0");
 
         // Create server socket
         server_fd_ = socket(AF_INET, SOCK_STREAM, 0);
@@ -1504,8 +1621,9 @@ public:
 
         if (config_.host == "0.0.0.0") {
             addr.sin_addr.s_addr = INADDR_ANY;
-        } else {
-            inet_pton(AF_INET, config_.host.c_str(), &addr.sin_addr);
+        } else if (!util::resolve_host(config_.host, addr.sin_addr)) {
+            close(server_fd_);
+            throw std::runtime_error("Failed to resolve host: " + config_.host);
         }
 
         if (bind(server_fd_, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0) {
@@ -1519,6 +1637,10 @@ public:
         }
 
         running_ = true;
+
+        if (!config_.service_discovery_host.empty()) {
+            discovery_thread_ = std::thread([this] { discovery_loop(); });
+        }
 
         // Create thread pool
         pool_ = std::make_unique<ThreadPool>(static_cast<size_t>(config_.worker_threads));
@@ -1537,7 +1659,11 @@ public:
     void stop() {
         if (!running_.exchange(false)) return;
 
-        spdlog::info("Stopping Throttlr...");
+        spdlog::info("Stopping gateway...");
+
+        if (discovery_thread_.joinable()) {
+            discovery_thread_.join();
+        }
 
         // Close server socket
         if (server_fd_ >= 0) {
@@ -1553,7 +1679,7 @@ public:
         // Stop thread pool
         if (pool_) pool_->shutdown();
 
-        spdlog::info("Throttlr stopped");
+        spdlog::info("Gateway stopped");
     }
 
     void reload_config([[maybe_unused]] const std::string& path) {
@@ -1564,6 +1690,61 @@ public:
     bool is_running() const { return running_; }
 
 private:
+    void discovery_loop() {
+        while (running_) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(config_.service_discovery_interval_ms));
+            if (!running_) break;
+            
+            int fd = socket(AF_INET, SOCK_STREAM, 0);
+            if (fd < 0) continue;
+            
+            sockaddr_in addr{};
+            addr.sin_family = AF_INET;
+            addr.sin_port = htons(config_.service_discovery_port);
+            inet_pton(AF_INET, config_.service_discovery_host.c_str(), &addr.sin_addr); // assuming IP for simplicity
+            
+            if (connect(fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+                close(fd);
+                continue;
+            }
+            
+            std::string req = "GET " + config_.service_discovery_path + " HTTP/1.1\r\nHost: " + config_.service_discovery_host + "\r\nConnection: close\r\n\r\n";
+            send(fd, req.c_str(), req.length(), 0);
+            
+            std::string resp_data;
+            char buf[4096];
+            while (true) {
+                ssize_t n = recv(fd, buf, sizeof(buf), 0);
+                if (n <= 0) break;
+                resp_data.append(buf, n);
+            }
+            close(fd);
+            
+            auto header_end = resp_data.find("\r\n\r\n");
+            if (header_end != std::string::npos) {
+                std::string body = resp_data.substr(header_end + 4);
+                try {
+                    json reg = json::parse(body);
+                    for (auto& [group, items] : reg.items()) {
+                        std::vector<BackendConfig> bcs;
+                        for (auto& item : items) {
+                            BackendConfig bc;
+                            bc.name = item.value("name", "unnamed");
+                            bc.host = item.value("host", "127.0.0.1");
+                            bc.port = item.value("port", 80);
+                            bc.weight = item.value("weight", 1);
+                            bc.enabled = item.value("enabled", true);
+                            bcs.push_back(bc);
+                        }
+                        load_balancer_.set_backends(group, bcs);
+                    }
+                } catch (...) {
+                    // Ignore parse errors
+                }
+            }
+        }
+    }
+
     void accept_loop() {
         while (running_) {
             sockaddr_in client_addr{};
@@ -1594,10 +1775,60 @@ private:
         }
     }
 
-    void handle_connection(int fd, const std::string& client_ip) {
-        util::set_nonblocking(fd);
 
-        // Set socket timeout
+    void websocket_pump(Stream& client, Stream& backend) {
+        util::set_nonblocking(client.fd);
+        util::set_nonblocking(backend.fd);
+        
+        pollfd fds[2];
+        fds[0].fd = client.fd; fds[0].events = POLLIN;
+        fds[1].fd = backend.fd; fds[1].events = POLLIN;
+        
+        char buf[8192];
+        while (running_) {
+            int ret = poll(fds, 2, 1000);
+            if (ret < 0) break; if (ret == 0) continue;
+            
+            if (fds[0].revents & POLLIN) {
+                ssize_t n = client.read(buf, sizeof(buf));
+                if (n <= 0) break;
+                ssize_t sent = 0;
+                while (sent < n) {
+                    ssize_t s = backend.write(buf + sent, n - sent);
+                    if (s <= 0) break;
+                    sent += s;
+                }
+                if (sent < n) break;
+            }
+            if (fds[1].revents & POLLIN) {
+                ssize_t n = backend.read(buf, sizeof(buf));
+                if (n <= 0) break;
+                ssize_t sent = 0;
+                while (sent < n) {
+                    ssize_t s = client.write(buf + sent, n - sent);
+                    if (s <= 0) break;
+                    sent += s;
+                }
+                if (sent < n) break;
+            }
+            if ((fds[0].revents & (POLLERR | POLLHUP)) || (fds[1].revents & (POLLERR | POLLHUP))) break;
+        }
+    }
+
+    void handle_connection(int fd, const std::string& client_ip) {
+        SSL* ssl = nullptr;
+        if (server_ctx_) {
+            ssl = SSL_new(server_ctx_);
+            SSL_set_fd(ssl, fd);
+            if (SSL_accept(ssl) <= 0) {
+                SSL_free(ssl);
+                close(fd);
+                return;
+            }
+        }
+        Stream client_stream(fd, ssl);
+        
+        util::set_nonblocking(fd);
         timeval tv{config_.request_timeout_ms / 1000, (config_.request_timeout_ms % 1000) * 1000};
         setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
         setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
@@ -1607,70 +1838,47 @@ private:
         char read_buf[BUFFER_SIZE];
 
         while (running_) {
-            // Read request
-            ssize_t n = recv(fd, read_buf, sizeof(read_buf), 0);
+            ssize_t n = client_stream.read(read_buf, sizeof(read_buf));
             if (n <= 0) break;
-
             buffer.append(read_buf, static_cast<size_t>(n));
 
-            // Check for complete request (simple check for \r\n\r\n)
             auto header_end = buffer.find("\r\n\r\n");
-            if (header_end == std::string::npos) {
-                if (buffer.size() > MAX_HEADER_SIZE) {
-                    // Header too large
-                    auto response = HttpResponse::error(HttpStatus::PayloadTooLarge, "Request header too large");
-                    send_response(fd, response);
-                    break;
-                }
-                continue;
-            }
+            if (header_end == std::string::npos) continue;
 
-            // Parse request
             auto request = HttpRequest::parse(buffer);
             if (!request) {
-                auto response = HttpResponse::bad_request("Malformed request");
-                send_response(fd, response);
+                send_response(client_stream, HttpResponse::bad_request("Malformed request"));
                 break;
             }
-
             request->client_ip = client_ip;
             request->request_id = util::generate_uuid();
 
-            // Handle request
             auto start = Clock::now();
-            auto response = process_request(*request);
+            auto response = process_request(*request, client_stream);
             auto end = Clock::now();
 
-            double latency_ms = std::chrono::duration<double, std::milli>(end - start).count();
+            if (static_cast<int>(response.status) == 0) break;
 
-            // Add standard headers
+            double latency_ms = std::chrono::duration<double, std::milli>(end - start).count();
             response.set_header("Server", "Throttlr/2.0.0");
             response.set_header("X-Request-ID", request->request_id);
             response.set_header("X-Response-Time", std::to_string(static_cast<int>(latency_ms)) + "ms");
+            if (config_.cors_enabled) add_cors_headers(response);
 
-            // CORS headers
-            if (config_.cors_enabled) {
-                add_cors_headers(response);
-            }
+            send_response(client_stream, response);
 
-            // Send response
-            send_response(fd, response);
-
-            // Log and record metrics
             access_logger_.log(*request, response, latency_ms);
-            metrics_.record_request(request->method_str(), request->path,
-                                   static_cast<int>(response.status), latency_ms);
+            metrics_.record_request(request->method_str(), request->path, static_cast<int>(response.status), latency_ms);
 
-            // Keep-alive handling
             if (!request->keep_alive()) break;
-
             buffer.clear();
         }
-
+        
+        if (ssl) { SSL_shutdown(ssl); SSL_free(ssl); }
         close(fd);
     }
 
-    HttpResponse process_request(HttpRequest& request) {
+    HttpResponse process_request(HttpRequest& request, Stream& client_stream) {
         // Health check endpoint
         if (request.path == "/health" || request.path == "/healthz") {
             return HttpResponse::json({
@@ -1720,10 +1928,10 @@ private:
         }
 
         // Proxy to backend
-        return proxy_request(request, match->route);
+        return proxy_request(request, match->route, client_stream);
     }
 
-    HttpResponse proxy_request(HttpRequest& request, const RouteConfig& route) {
+    HttpResponse proxy_request(HttpRequest& request, const RouteConfig& route, Stream& client_stream) {
         // Select backend
         auto backend = load_balancer_.select(route.backend_group);
         if (!backend) {
@@ -1750,6 +1958,20 @@ private:
 
         // Prepare request for backend
         HttpRequest backend_request = request;
+        if (route.auth_required) {
+            auto auth_header = request.header("Authorization");
+            if (!auth_header) {
+                return HttpResponse::error(HttpStatus::Unauthorized, "Missing Authorization header");
+            }
+            AuthResult auth = authenticator_->authenticate(*auth_header);
+            if (!auth.valid) {
+                return HttpResponse::error(HttpStatus::Unauthorized, "Invalid token: " + auth.error);
+            }
+            // Add user info to backend request
+            backend_request.set_header("X-User-ID", auth.user_id);
+            backend_request.set_header("X-User-Type", auth.user_type);
+        }
+
 
         // Rewrite path if configured
         if (route.strip_prefix && !route.path_pattern.empty()) {
@@ -1788,8 +2010,11 @@ private:
         timeval tv{route.timeout_ms / 1000, (route.timeout_ms % 1000) * 1000};
         setsockopt(conn_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 
+        Stream backend_stream(conn_fd, backend->config.tls_enabled ? SSL_new(client_ctx_) : nullptr);
+        if (backend_stream.ssl) { SSL_set_fd(backend_stream.ssl, conn_fd); SSL_connect(backend_stream.ssl); }
+
         while (true) {
-            ssize_t n = recv(conn_fd, buf, sizeof(buf), 0);
+            ssize_t n = backend_stream.read(buf, sizeof(buf));
             if (n < 0) {
                 if (errno == EAGAIN || errno == EWOULDBLOCK) {
                     // Timeout
@@ -1806,37 +2031,78 @@ private:
             response_data.append(buf, static_cast<size_t>(n));
 
             // Simple check: if we have headers and body, we're done
-            // (This is simplified - production would need proper Content-Length/chunked handling)
             if (response_data.find("\r\n\r\n") != std::string::npos) {
-                // Check if we have Content-Length
                 auto header_end = response_data.find("\r\n\r\n");
                 std::string headers = response_data.substr(0, header_end);
+                std::string headers_lower = headers;
+                std::transform(headers_lower.begin(), headers_lower.end(), headers_lower.begin(), ::tolower);
 
-                auto cl_pos = headers.find("Content-Length:");
+                // Check for Content-Length (case-insensitive)
+                auto cl_pos = headers_lower.find("content-length:");
                 if (cl_pos != std::string::npos) {
-                    auto cl_end = headers.find("\r\n", cl_pos);
-                    size_t content_length = std::stoull(headers.substr(cl_pos + 15, cl_end - cl_pos - 15));
+                    auto cl_end = headers_lower.find("\r\n", cl_pos);
+                    std::string cl_value = headers.substr(cl_pos + 15, cl_end - cl_pos - 15);
+                    // Trim whitespace
+                    size_t start = cl_value.find_first_not_of(" \t");
+                    if (start != std::string::npos) {
+                        cl_value = cl_value.substr(start);
+                    }
+                    size_t content_length = std::stoull(cl_value);
                     size_t body_received = response_data.size() - header_end - 4;
 
                     if (body_received >= content_length) break;
+                } else if (headers_lower.find("http/1.0") != std::string::npos ||
+                           headers_lower.find("connection: close") != std::string::npos) {
+                    // HTTP/1.0 or Connection: close - keep reading until EOF
+                    continue;
                 } else {
-                    // No Content-Length, assume we got everything after a short read
+                    // Try one more blocking read with short timeout
+                    timeval short_tv{0, 100000};  // 100ms
+                    setsockopt(conn_fd, SOL_SOCKET, SO_RCVTIMEO, &short_tv, sizeof(short_tv));
+                    ssize_t extra = backend_stream.read(buf, sizeof(buf));
+                    if (extra > 0) {
+                        response_data.append(buf, static_cast<size_t>(extra));
+                    }
                     break;
                 }
             }
         }
 
-        // Return connection to pool
-        backend->pool->release(conn_fd);
-        backend->active_requests--;
 
         // Parse response
         auto response = HttpResponse::parse(response_data);
         if (!response) {
             backend->failed_requests++;
             backend->circuit->record_failure();
+            backend->pool->invalidate(conn_fd);
             return HttpResponse::bad_gateway("Invalid response from backend");
         }
+
+        // Websocket detection!
+        if (response->status == HttpStatus::SwitchingProtocols) {
+            // Send the 101 to client bypassing handle_connection's normal write
+            send_response(client_stream, *response);
+            
+            // Enter bidirectional byte pump
+                        Stream backend_stream(conn_fd, backend->config.tls_enabled ? SSL_new(client_ctx_) : nullptr);
+            if (backend_stream.ssl) { SSL_set_fd(backend_stream.ssl, conn_fd); SSL_connect(backend_stream.ssl); }
+            websocket_pump(client_stream, backend_stream);
+            if (backend_stream.ssl) { SSL_shutdown(backend_stream.ssl); SSL_free(backend_stream.ssl); }
+            
+            // DO NOT release connection back to pool (it's closed now)
+            backend->pool->invalidate(conn_fd);
+            backend->active_requests--;
+            
+            // Return special status code 0 so handle_connection aborts gracefully
+            HttpResponse abort_resp;
+            abort_resp.status = static_cast<HttpStatus>(0);
+            return abort_resp;
+        }
+
+        // Return connection to pool
+        if (backend_stream.ssl) { SSL_shutdown(backend_stream.ssl); SSL_free(backend_stream.ssl); }
+        backend->pool->release(conn_fd);
+
 
         // Record success
         int status_code = static_cast<int>(response->status);
@@ -1889,22 +2155,6 @@ private:
         return HttpResponse::not_found();
     }
 
-    void send_response(int fd, const HttpResponse& response) {
-        std::string data = response.serialize();
-        size_t total_sent = 0;
-
-        while (total_sent < data.size()) {
-            ssize_t sent = send(fd, data.c_str() + total_sent, data.size() - total_sent, MSG_NOSIGNAL);
-            if (sent < 0) {
-                if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                    std::this_thread::sleep_for(1ms);
-                    continue;
-                }
-                break;
-            }
-            total_sent += static_cast<size_t>(sent);
-        }
-    }
 
     void add_cors_headers(HttpResponse& response) {
         if (config_.cors_origins.size() == 1 && config_.cors_origins[0] == "*") {
@@ -1976,7 +2226,10 @@ private:
         sockaddr_in addr{};
         addr.sin_family = AF_INET;
         addr.sin_port = htons(backend.port);
-        inet_pton(AF_INET, backend.host.c_str(), &addr.sin_addr);
+        if (!util::resolve_host(backend.host, addr.sin_addr)) {
+            close(fd);
+            return false;
+        }
 
         // Blocking connect with timeout
         if (connect(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0) {
@@ -2036,6 +2289,10 @@ private:
 
     Config config_;
     Router router_;
+    std::unique_ptr<Authenticator> authenticator_;
+    SSL_CTX* server_ctx_ = nullptr;
+    SSL_CTX* client_ctx_ = nullptr;
+    std::thread discovery_thread_;
     LoadBalancer load_balancer_;
     RateLimiter rate_limiter_;
     Metrics metrics_;
@@ -2075,7 +2332,7 @@ void print_banner() {
    | | | | | | | | (_) | |_| |_| | |
    |_| |_| |_|_|  \___/ \__|\__|_|_|
 
-  High-Performance API Gateway v2.0.0
+  Enterprise API Gateway v2.0.0
 )" << std::endl;
 }
 

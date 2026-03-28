@@ -1,106 +1,57 @@
-# Multi-stage Dockerfile for OS Gateway
-# Enterprise-grade C++ API Gateway
-
-# ============================================
-# Stage 1: Build dependencies
-# ============================================
-FROM ubuntu:24.04 AS deps
+# Build stage: Compile the Gateway binaries natively
+FROM ubuntu:22.04 AS builder
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# Install core build dependencies required for Throttlr (C++20, CMake, OpenSSL, Hiredis)
+RUN apt-get update && apt-get install -y \
     build-essential \
-    g++-13 \
     cmake \
-    ninja-build \
     git \
-    curl \
-    ca-certificates \
-    python3-pip \
+    pkg-config \
     libssl-dev \
-    libhiredis-dev \
-    libnghttp2-dev \
-    libzstd-dev \
-    libbrotli-dev \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install Conan
-RUN pip3 install --break-system-packages conan && \
-    conan profile detect
-
-WORKDIR /build
-
-# Copy only dependency files first for caching
-COPY conanfile.py CMakeLists.txt ./
-
-# Install dependencies
-RUN conan install . --build=missing -of=deps \
-    -s compiler=gcc \
-    -s compiler.version=13 \
-    -s compiler.cppstd=20 \
-    -s build_type=Release || true
-
-# ============================================
-# Stage 2: Build
-# ============================================
-FROM deps AS builder
-
-COPY . /build/
-
-RUN cmake -B build -G Ninja \
-    -DCMAKE_BUILD_TYPE=Release \
-    -DCMAKE_C_COMPILER=gcc-13 \
-    -DCMAKE_CXX_COMPILER=g++-13 \
-    -DGATEWAY_BUILD_TESTS=OFF \
-    -DGATEWAY_BUILD_BENCHMARKS=OFF && \
-    cmake --build build --parallel || \
-    (echo "Build with full deps" && make -C build)
-
-# ============================================
-# Stage 3: Runtime
-# ============================================
-FROM ubuntu:24.04 AS runtime
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates \
-    curl \
-    libssl3 \
-    libhiredis1.1.0 \
-    libnghttp2-14 \
-    libbrotli1 \
-    libzstd1 \
-    && rm -rf /var/lib/apt/lists/* \
-    && useradd -r -s /bin/false gateway
+    libhiredis-dev
 
 WORKDIR /app
 
-# Copy binaries from builder
-COPY --from=builder /build/build/bin/gateway /app/ 2>/dev/null || \
-     COPY --from=builder /build/build/gateway /app/ 2>/dev/null || true
-COPY --from=builder /build/build/bin/backend /app/ 2>/dev/null || \
-     COPY --from=builder /build/build/backend /app/ 2>/dev/null || true
+# Copy the full C++ source codebase from the repository
+COPY . .
 
-# Copy configuration
-COPY config/ /app/config/
+# Generate the CMake makefiles and compile using all available CPU threads
+RUN mkdir -p build_cmake && cd build_cmake && \
+    cmake -DCMAKE_BUILD_TYPE=Release .. && \
+    make -j$(nproc) gateway
 
-# Create directories
-RUN mkdir -p /var/log/gateway /var/run/gateway && \
-    chown -R gateway:gateway /app /var/log/gateway /var/run/gateway
+# Provide the backend service tool compilation as well for integrated testing (optional)
+RUN cd build_cmake && make -j$(nproc) backend || true
 
-# Switch to non-root user
-USER gateway
+# Execution stage: Construct a minimal container strictly for deploying the hardened gateway
+FROM ubuntu:22.04
 
-# Expose ports
-EXPOSE 8080 9090 9091
+ENV DEBIAN_FRONTEND=noninteractive
 
-# Health check
-HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8080/health || exit 1
+# Install only the runtime libraries necessary for the system
+RUN apt-get update && apt-get install -y \
+    libssl3 \
+    libhiredis0.14 \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 
-# Environment variables
-ENV GATEWAY_CONFIG=/app/config/gateway.yaml \
-    GATEWAY_LOG_LEVEL=info
+# Establish a secure non-root user specifically for running the open port service
+RUN useradd -m -s /bin/bash throttlr
 
-# Entry point
-ENTRYPOINT ["/app/gateway"]
-CMD ["-c", "/app/config/gateway.yaml"]
+WORKDIR /opt/throttlr
+RUN mkdir -p /opt/throttlr/config && chown -R throttlr:throttlr /opt/throttlr
+
+# Copy solely the compiled gateway engine and its internal configs from the builder layer
+COPY --from=builder --chown=throttlr:throttlr /app/build_cmake/bin/gateway /usr/local/bin/gateway
+COPY --from=builder --chown=throttlr:throttlr /app/config/*.json /opt/throttlr/config/
+
+# Execute the container under the security of the standard non-root user
+USER throttlr
+
+# Present standard web gateway ports (8080 for HTTP / 8443 for HTTPS edge tunnel)
+EXPOSE 8080 8443
+
+# Start the gateway natively pulling from its deployment working directory configuration
+ENTRYPOINT ["/usr/local/bin/gateway", "-c", "config/gateway.json"]

@@ -1,69 +1,11 @@
-volatile std::sig_atomic_t reload_requested = 0;
-
-void handle_sighup(int signal) {
-    reload_requested = 1;
-    std::cout << "\n[RELOAD] SIGHUP received, reloading config...\n";
-}
 #include <csignal>
-volatile std::sig_atomic_t shutdown_requested = 0;
-int server_fd_global = -1;
-
-void handle_signal(int signal) {
-    shutdown_requested = 1;
-    if (server_fd_global != -1) close(server_fd_global);
-    std::cout << "\n[SHUTDOWN] Signal received, shutting down gracefully...\n";
-    save_token_buckets();
-    exit(0);
-}
 #include <unordered_map>
-// Circuit breaker state for each backend
-struct CircuitBreaker {
-    int failure_count = 0;
-    bool open = false;
-    std::chrono::steady_clock::time_point open_time;
-};
-std::unordered_map<int, CircuitBreaker> circuit_breakers;
-const int CB_FAILURE_THRESHOLD = 3;
-const int CB_COOLDOWN_SECONDS = 30;
 #include <regex>
 #include "../include/authenticator.h"
-// Authenticator instance (JWT)
-Authenticator* authenticator = nullptr;
-std::string jwt_secret = "supersecret"; // TODO: load from config/env
 #include "../include/redis_rate_limiter.h"
-// Redis rate limiter instance (optional)
-RedisRateLimiter* redis_rl = nullptr;
 #include <atomic>
-// Metrics
-std::atomic<int> total_requests{0};
-std::atomic<int> rate_limited_requests{0};
 #include <fstream>
 #include <iomanip>
-// File persistence helpers
-const std::string RL_STATE_FILE = "logs/ratelimit_state.txt";
-
-void save_token_buckets() {
-    if (rate_limit_storage != "file") return;
-    std::ofstream ofs(RL_STATE_FILE);
-    for (const auto& [key, bucket] : token_buckets) {
-        ofs << key << " " << std::fixed << std::setprecision(6) << bucket.tokens << " " << bucket.last_refill.time_since_epoch().count() << "\n";
-    }
-}
-
-void load_token_buckets() {
-    if (rate_limit_storage != "file") return;
-    std::ifstream ifs(RL_STATE_FILE);
-    std::string key;
-    double tokens;
-    long long last_refill_count;
-    while (ifs >> key >> tokens >> last_refill_count) {
-        TokenBucket bucket;
-        bucket.tokens = tokens;
-        bucket.last_refill = std::chrono::steady_clock::time_point(std::chrono::steady_clock::duration(last_refill_count));
-        token_buckets[key] = bucket;
-    }
-}
-
 #include <iostream>
 #include <cstring>
 #include <unistd.h>
@@ -74,11 +16,49 @@ void load_token_buckets() {
 #include <queue>
 #include <condition_variable>
 #include <map>
-#include <unordered_map>
 #include <chrono>
-#include <fstream>
 #include <sstream>
-#include <regex>
+#include <cmath>
+volatile std::sig_atomic_t reload_requested = 0;
+void save_token_buckets();
+void load_token_buckets();
+
+void handle_sighup(int signal) {
+    reload_requested = 1;
+    std::cout << "\n[RELOAD] SIGHUP received, reloading config...\n";
+}
+volatile std::sig_atomic_t shutdown_requested = 0;
+int server_fd_global = -1;
+
+void handle_signal(int signal) {
+    shutdown_requested = 1;
+    if (server_fd_global != -1) close(server_fd_global);
+    std::cout << "\n[SHUTDOWN] Signal received, shutting down gracefully...\n";
+    save_token_buckets();
+    exit(0);
+}
+// Circuit breaker state for each backend
+struct CircuitBreaker {
+    int failure_count = 0;
+    bool open = false;
+    std::chrono::steady_clock::time_point open_time;
+};
+std::unordered_map<int, CircuitBreaker> circuit_breakers;
+const int CB_FAILURE_THRESHOLD = 3;
+const int CB_COOLDOWN_SECONDS = 30;
+// Authenticator instance (JWT)
+Authenticator* authenticator = nullptr;
+std::string jwt_secret = "supersecret"; // TODO: load from config/env
+// Redis rate limiter instance (optional)
+RedisRateLimiter* redis_rl = nullptr;
+// Metrics
+std::atomic<int> total_requests{0};
+std::atomic<int> rate_limited_requests{0};
+// File persistence helpers
+const std::string RL_STATE_FILE = "logs/ratelimit_state.txt";
+
+
+
 
 
 #define PORT 8080
@@ -114,6 +94,28 @@ struct TokenBucket {
 };
 std::unordered_map<std::string, TokenBucket> token_buckets;
 std::mutex rate_mutex;
+
+void save_token_buckets() {
+    if (rate_limit_storage != "file") return;
+    std::ofstream ofs(RL_STATE_FILE);
+    for (const auto& [key, bucket] : token_buckets) {
+        ofs << key << " " << std::fixed << std::setprecision(6) << bucket.tokens << " " << bucket.last_refill.time_since_epoch().count() << "\n";
+    }
+}
+
+void load_token_buckets() {
+    if (rate_limit_storage != "file") return;
+    std::ifstream ifs(RL_STATE_FILE);
+    std::string key;
+    double tokens;
+    long long last_refill_count;
+    while (ifs >> key >> tokens >> last_refill_count) {
+        TokenBucket bucket;
+        bucket.tokens = tokens;
+        bucket.last_refill = std::chrono::steady_clock::time_point(std::chrono::steady_clock::duration(last_refill_count));
+        token_buckets[key] = bucket;
+    }
+}
 
 // Helper to trim whitespace
 std::string trim(const std::string& s) {
@@ -261,6 +263,25 @@ int route_request(const std::string& request) {
 // ---------------- CLIENT HANDLER ----------------
 
 void handle_client(int client_socket, sockaddr_in client_addr) {
+
+    // Timeout
+    struct timeval timeout{};
+    timeout.tv_sec = 5;
+    setsockopt(client_socket, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+
+    // Extract IP
+    char ip[INET_ADDRSTRLEN];
+    inet_ntop(AF_INET, &client_addr.sin_addr, ip, sizeof(ip));
+    std::string client_ip(ip);
+
+    // Read request
+    char buffer[4096] = {0};
+    int bytes_read = read(client_socket, buffer, sizeof(buffer));
+    if (bytes_read <= 0) {
+        close(client_socket);
+        return;
+    }
+    std::string request(buffer, bytes_read);
             // Serve OpenAPI YAML
             if (request.find("GET /openapi.yaml") == 0) {
                 std::ifstream openapi("config/openapi.yaml");
@@ -289,24 +310,6 @@ void handle_client(int client_socket, sockaddr_in client_addr) {
             close(client_socket);
             return;
         }
-    // Timeout
-    struct timeval timeout{};
-    timeout.tv_sec = 5;
-    setsockopt(client_socket, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
-
-    // Extract IP
-    char ip[INET_ADDRSTRLEN];
-    inet_ntop(AF_INET, &client_addr.sin_addr, ip, sizeof(ip));
-    std::string client_ip(ip);
-
-    // Read request
-    char buffer[4096] = {0};
-    int bytes_read = read(client_socket, buffer, sizeof(buffer));
-    if (bytes_read <= 0) {
-        close(client_socket);
-        return;
-    }
-    std::string request(buffer, bytes_read);
 
         // JWT authentication
         std::string auth_header;
@@ -360,7 +363,7 @@ void handle_client(int client_socket, sockaddr_in client_addr) {
             oss << "HTTP/1.1 429 Too Many Requests\r\n"
                 << "Retry-After: " << retry_after << "\r\n"
                 << "Content-Type: application/json\r\n";
-            std::string body = "{\"error\":\"Rate limit exceeded\",\"limit\":" << max_req << ",\"window\":" << window_sec << ",\"retry_after\":" << retry_after << "}";
+            std::string body = "{\"error\":\"Rate limit exceeded\",\"limit\":" + std::to_string(max_req) + ",\"window\":" + std::to_string(window_sec) + ",\"retry_after\":" + std::to_string(retry_after) + "}";
             oss << "Content-Length: " << body.size() << "\r\n\r\n" << body;
             std::string response = oss.str();
             send(client_socket, response.c_str(), response.size(), 0);
@@ -452,6 +455,7 @@ void print_metrics() {
     std::cout << "----------------------\n";
 }
 
+#ifndef TEST_MODE
 int main() {
         std::signal(SIGHUP, handle_sighup);
     // Load rate limit config
@@ -519,71 +523,7 @@ int main() {
             std::lock_guard<std::mutex> lock(queue_mutex);
             client_queue.push({client_socket, client_addr});
         }
-            // Distributed rate limiting with Redis
-            if (rate_limit_storage == "redis" && redis_rl) {
-                int max_req = rl ? rl->max_requests : 50;
-                int window_sec = rl ? rl->window_seconds : 10;
-                double refill_rate = (double)max_req / window_sec;
-                double tokens_left = 0;
-                int retry_after = 1;
-                total_requests++;
-                bool allowed = redis_rl->allow(rl_key, max_req, window_sec, refill_rate, tokens_left, retry_after);
-                if (!allowed) {
-                    rate_limited_requests++;
-                    std::ostringstream oss;
-                    oss << "HTTP/1.1 429 Too Many Requests\r\n"
-                        << "Retry-After: " << retry_after << "\r\n"
-                        << "Content-Type: application/json\r\n";
-                    std::string body = "{\"error\":\"Rate limit exceeded\",\"limit\":" << max_req << ",\"window\":" << window_sec << ",\"retry_after\":" << retry_after << "}";
-                    oss << "Content-Length: " << body.size() << "\r\n\r\n" << body;
-                    std::string response = oss.str();
-                    send(client_socket, response.c_str(), response.size(), 0);
-                    if (rate_limit_logging) {
-                        std::cout << "[RATE LIMIT][REDIS] IP: " << client_ip << " endpoint: " << endpoint << " user: " << user_type << "\n";
-                    }
-                    close(client_socket);
-                    return;
-                }
-            } else {
-                // Token bucket rate limiting (local)
-                std::lock_guard<std::mutex> lock(rate_mutex);
-                auto now = std::chrono::steady_clock::now();
-                int max_req = rl ? rl->max_requests : 50;
-                int window_sec = rl ? rl->window_seconds : 10;
-                double refill_rate = (double)max_req / window_sec; // tokens per second
-                double capacity = max_req;
-                TokenBucket& bucket = token_buckets[rl_key];
-                if (bucket.tokens == 0 && bucket.last_refill.time_since_epoch().count() == 0) {
-                    bucket.tokens = capacity;
-                    bucket.last_refill = now;
-                }
-                double elapsed = std::chrono::duration_cast<std::chrono::microseconds>(now - bucket.last_refill).count() / 1e6;
-                bucket.tokens = std::min(capacity, bucket.tokens + elapsed * refill_rate);
-                bucket.last_refill = now;
-                total_requests++;
-                if (bucket.tokens >= 1.0) {
-                    bucket.tokens -= 1.0;
-                } else {
-                    rate_limited_requests++;
-                    int retry_after = 1;
-                    if (refill_rate > 0) {
-                        retry_after = std::max(1, (int)std::ceil((1.0 - bucket.tokens) / refill_rate));
-                    }
-                    std::ostringstream oss;
-                    oss << "HTTP/1.1 429 Too Many Requests\r\n"
-                        << "Retry-After: " << retry_after << "\r\n"
-                        << "Content-Type: application/json\r\n";
-                    std::string body = "{\"error\":\"Rate limit exceeded\",\"limit\":" << max_req << ",\"window\":" << window_sec << ",\"retry_after\":" << retry_after << "}";
-                    oss << "Content-Length: " << body.size() << "\r\n\r\n" << body;
-                    std::string response = oss.str();
-                    send(client_socket, response.c_str(), response.size(), 0);
-                    if (rate_limit_logging) {
-                        std::cout << "[RATE LIMIT] IP: " << client_ip << " endpoint: " << endpoint << " user: " << user_type << "\n";
-                    }
-                    close(client_socket);
-                    return;
-                }
-            }
+
 
         cv.notify_one();
         // Save token buckets every 10 requests (for demo; tune as needed)
@@ -595,3 +535,5 @@ int main() {
 
     return 0;
 }
+
+#endif

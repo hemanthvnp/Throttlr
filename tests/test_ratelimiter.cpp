@@ -1,4 +1,5 @@
-# Example unit test for rate limiter (to be expanded)
+// Example unit test for rate limiter (to be expanded)
+#define TEST_MODE
 #include "../src/server.cpp"
 #include <cassert>
 #include <iostream>
