@@ -48,11 +48,15 @@ COPY --from=builder --chown=throttlr:throttlr /app/build_cmake/bin/gateway /usr/
 COPY --from=builder --chown=throttlr:throttlr /app/build_cmake/bin/backend /usr/local/bin/backend
 COPY --from=builder --chown=throttlr:throttlr /app/config/*.json /opt/throttlr/config/
 
+# Set up the startup script wrapper for all-in-one deployment
+COPY start.sh /opt/throttlr/start.sh
+RUN chmod +x /opt/throttlr/start.sh
+
 # Execute the container under the security of the standard non-root user
 USER throttlr
 
 # Present standard web gateway ports (8080 for HTTP / 8443 for HTTPS edge tunnel)
-EXPOSE 8080 8443
+EXPOSE 8080 8443 9001 9002 9003
 
-# Start the gateway natively pulling from its deployment working directory configuration
-ENTRYPOINT ["/usr/local/bin/gateway", "-c", "config/gateway.json"]
+# Start the gateway alongside local backend servers using the wrapper script
+ENTRYPOINT ["/opt/throttlr/start.sh"]
