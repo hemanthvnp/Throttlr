@@ -17,13 +17,13 @@ WORKDIR /app
 # Copy the full C++ source codebase from the repository
 COPY . .
 
-# Generate the CMake makefiles and compile using all available CPU threads
+# Generate the CMake makefiles and compile using limited concurrency to prevent OOM
 RUN mkdir -p build_cmake && cd build_cmake && \
     cmake -DCMAKE_BUILD_TYPE=Release .. && \
-    make -j$(nproc) gateway
+    make -j2 gateway
 
 # Provide the backend service tool compilation as well for integrated testing (optional)
-RUN cd build_cmake && make -j$(nproc) backend || true
+RUN cd build_cmake && make -j2 backend || true
 
 # Execution stage: Construct a minimal container strictly for deploying the hardened gateway
 FROM ubuntu:22.04
