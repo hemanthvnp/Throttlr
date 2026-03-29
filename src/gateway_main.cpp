@@ -1963,6 +1963,22 @@ private:
     }
 
     HttpResponse proxy_request(HttpRequest& request, const RouteConfig& route, Stream& client_stream) {
+        // Authenticate first (Security best practice: Fail Fast)
+        if (route.auth_required) {
+            auto auth_header = request.header("Authorization");
+            if (!auth_header) {
+                return HttpResponse::error(HttpStatus::Unauthorized, "Missing Authorization header");
+            }
+            AuthResult auth = authenticator_->authenticate(*auth_header);
+            if (!auth.valid) {
+                return HttpResponse::error(HttpStatus::Unauthorized, "Invalid token: " + auth.error);
+            }
+            
+            // Add identifying headers for backend
+            if (!auth.user_id.empty()) request.set_header("X-User-ID", auth.user_id);
+            if (!auth.user_type.empty()) request.set_header("X-Role", auth.user_type);
+        }
+
         // Select backend
         auto backend = load_balancer_.select(route.backend_group);
         if (!backend) {
