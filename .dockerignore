@@ -3,3 +3,12 @@ build/
 bin/
 .DS_Store
 .git/
+jwt-cpp/
+include/nlohmann/
+logs/
+*.o
+*.a
+*.so
+.vscode/
+.idea/
+cmake-build-*/
