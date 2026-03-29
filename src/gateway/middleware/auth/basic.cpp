@@ -26,7 +26,7 @@ public:
         if (!auth || auth->substr(0, 6) != "Basic ") {
             auto response = std::make_unique<Response>(HttpStatus::Unauthorized);
             response->set_header("WWW-Authenticate", "Basic realm=\"" + config_.realm + "\"");
-            return {MiddlewareAction::Respond, std::move(response)};
+            return MiddlewareResult::respond(std::move(response));
         }
 
         std::string encoded = auth->substr(6);
@@ -34,10 +34,7 @@ public:
 
         auto colon = decoded.find(':');
         if (colon == std::string::npos) {
-            return {
-                MiddlewareAction::Respond,
-                std::make_unique<Response>(Response::bad_request("Invalid credentials format"))
-            };
+            return MiddlewareResult::respond(Response::bad_request("Invalid credentials format"));
         }
 
         std::string username = decoded.substr(0, colon);
@@ -45,14 +42,11 @@ public:
 
         auto it = config_.credentials.find(username);
         if (it == config_.credentials.end() || !verify_password(password, it->second)) {
-            return {
-                MiddlewareAction::Respond,
-                std::make_unique<Response>(Response::forbidden("Invalid credentials"))
-            };
+            return MiddlewareResult::respond(Response::forbidden("Invalid credentials"));
         }
 
         request.set_header("X-User-ID", username);
-        return {MiddlewareAction::Continue, nullptr};
+        return MiddlewareResult::ok();
     }
 
 private:

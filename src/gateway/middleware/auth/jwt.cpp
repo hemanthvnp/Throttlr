@@ -14,7 +14,7 @@ MiddlewareResult JwtMiddleware::on_request(Request& request) {
     // Check if path is excluded
     for (const auto& path : config_.excluded_paths) {
         if (request.path().find(path) == 0) {
-            return {MiddlewareAction::Continue, nullptr};
+            return MiddlewareResult::ok();
         }
     }
 
@@ -33,21 +33,15 @@ MiddlewareResult JwtMiddleware::on_request(Request& request) {
 
     if (token.empty()) {
         if (config_.required) {
-            return {
-                MiddlewareAction::Respond,
-                std::make_unique<Response>(Response::unauthorized("Missing authentication token"))
-            };
+            return MiddlewareResult::respond(Response::unauthorized("Missing authentication token"));
         }
-        return {MiddlewareAction::Continue, nullptr};
+        return MiddlewareResult::ok();
     }
 
     // Verify token
     auto result = verify_token(token);
     if (!result) {
-        return {
-            MiddlewareAction::Respond,
-            std::make_unique<Response>(Response::unauthorized(result.error()))
-        };
+        return MiddlewareResult::respond(Response::unauthorized(result.error()));
     }
 
     // Add claims to request headers for downstream
@@ -55,7 +49,7 @@ MiddlewareResult JwtMiddleware::on_request(Request& request) {
         request.set_header("X-JWT-" + key, value);
     }
 
-    return {MiddlewareAction::Continue, nullptr};
+    return MiddlewareResult::ok();
 }
 
 Result<Claims> JwtMiddleware::verify_token(std::string_view token) const {

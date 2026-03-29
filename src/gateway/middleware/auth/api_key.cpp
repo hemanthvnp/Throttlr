@@ -52,7 +52,7 @@ public:
         }
 
         request.set_header("X-User-ID", it->second);
-        return {MiddlewareAction::Continue, nullptr};
+        return MiddlewareResult::ok();
     }
 
 private:

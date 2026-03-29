@@ -141,29 +141,26 @@ CircuitBreakerMiddleware::~CircuitBreakerMiddleware() = default;
 MiddlewareResult CircuitBreakerMiddleware::on_request(Request& request) {
     auto backend = request.header("X-Backend-Name");
     if (!backend) {
-        return {MiddlewareAction::Continue, nullptr};
+        return MiddlewareResult::ok();
     }
 
     auto& breaker = get_or_create_breaker(*backend);
     if (!breaker.allow_request()) {
-        return {
-            MiddlewareAction::Respond,
-            std::make_unique<Response>(Response::service_unavailable("Circuit breaker open"))
-        };
+        return MiddlewareResult::respond(Response::service_unavailable("Circuit breaker open"));
     }
 
-    return {MiddlewareAction::Continue, nullptr};
+    return MiddlewareResult::ok();
 }
 
 MiddlewareResult CircuitBreakerMiddleware::on_response(Request& request, Response& response) {
     auto backend = request.header("X-Backend-Name");
     if (!backend) {
-        return {MiddlewareAction::Continue, nullptr};
+        return MiddlewareResult::ok();
     }
 
     auto* breaker = get_breaker(*backend);
     if (!breaker) {
-        return {MiddlewareAction::Continue, nullptr};
+        return MiddlewareResult::ok();
     }
 
     if (is_failure_response(response)) {
@@ -172,7 +169,7 @@ MiddlewareResult CircuitBreakerMiddleware::on_response(Request& request, Respons
         breaker->record_success();
     }
 
-    return {MiddlewareAction::Continue, nullptr};
+    return MiddlewareResult::ok();
 }
 
 MiddlewareResult CircuitBreakerMiddleware::on_error(Request& request, const std::string&) {
@@ -183,7 +180,7 @@ MiddlewareResult CircuitBreakerMiddleware::on_error(Request& request, const std:
             breaker->record_failure();
         }
     }
-    return {MiddlewareAction::Continue, nullptr};
+    return MiddlewareResult::ok();
 }
 
 CircuitBreaker* CircuitBreakerMiddleware::get_breaker(std::string_view backend_name) {

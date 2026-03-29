@@ -413,6 +413,13 @@ struct Config {
                 cfg.rate_limit.burst_size = r.value("burst_size", cfg.rate_limit.burst_size);
                 cfg.rate_limit.key_type = r.value("key_type", cfg.rate_limit.key_type);
                 cfg.rate_limit.header_name = r.value("header_name", cfg.rate_limit.header_name);
+
+                // Support alternative config format: requests + window_seconds
+                if (r.contains("requests") && r.contains("window_seconds")) {
+                    int requests = r.value("requests", 100);
+                    cfg.rate_limit.requests_per_second = requests;
+                    cfg.rate_limit.burst_size = requests;
+                }
             }
 
             // CORS

@@ -20,22 +20,22 @@ MiddlewareResult SecurityHeadersMiddleware::on_response(Request&, Response& resp
         if (config_.hsts_preload) {
             hsts += "; preload";
         }
-        response.set_header("Strict-Transport-Security", hsts);
+        response.header("Strict-Transport-Security", hsts);
     }
 
     // X-Frame-Options
     if (!config_.x_frame_options.empty()) {
-        response.set_header("X-Frame-Options", config_.x_frame_options);
+        response.header("X-Frame-Options", config_.x_frame_options);
     }
 
     // X-Content-Type-Options
     if (config_.x_content_type_options) {
-        response.set_header("X-Content-Type-Options", "nosniff");
+        response.header("X-Content-Type-Options", "nosniff");
     }
 
     // X-XSS-Protection
     if (!config_.x_xss_protection.empty()) {
-        response.set_header("X-XSS-Protection", config_.x_xss_protection);
+        response.header("X-XSS-Protection", config_.x_xss_protection);
     }
 
     // Content-Security-Policy
@@ -43,25 +43,25 @@ MiddlewareResult SecurityHeadersMiddleware::on_response(Request&, Response& resp
         std::string header = config_.csp_report_only
             ? "Content-Security-Policy-Report-Only"
             : "Content-Security-Policy";
-        response.set_header(header, config_.csp_policy);
+        response.header(header, config_.csp_policy);
     }
 
     // Referrer-Policy
     if (!config_.referrer_policy.empty()) {
-        response.set_header("Referrer-Policy", config_.referrer_policy);
+        response.header("Referrer-Policy", config_.referrer_policy);
     }
 
     // Permissions-Policy
     if (!config_.permissions_policy.empty()) {
-        response.set_header("Permissions-Policy", config_.permissions_policy);
+        response.header("Permissions-Policy", config_.permissions_policy);
     }
 
     // Custom headers
     for (const auto& [name, value] : config_.custom_headers) {
-        response.set_header(name, value);
+        response.header(name, value);
     }
 
-    return {MiddlewareAction::Continue, nullptr};
+    return MiddlewareResult::ok();
 }
 
 } // namespace gateway::middleware::security

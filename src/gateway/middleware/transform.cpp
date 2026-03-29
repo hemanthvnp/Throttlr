@@ -31,13 +31,13 @@ MiddlewareResult TransformMiddleware::on_request(Request& request) {
         request.set_path(path);
     }
 
-    return {MiddlewareAction::Continue, nullptr};
+    return MiddlewareResult::ok();
 }
 
 MiddlewareResult TransformMiddleware::on_response(Request&, Response& response) {
     // Add headers
     for (const auto& [name, value] : config_.add_response_headers) {
-        response.set_header(name, value);
+        response.header(name, value);
     }
 
     // Remove headers
@@ -45,7 +45,7 @@ MiddlewareResult TransformMiddleware::on_response(Request&, Response& response) 
         response.remove_header(name);
     }
 
-    return {MiddlewareAction::Continue, nullptr};
+    return MiddlewareResult::ok();
 }
 
 } // namespace gateway::middleware

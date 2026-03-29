@@ -52,44 +52,35 @@ void WafMiddleware::compile_patterns() {
 
 MiddlewareResult WafMiddleware::on_request(Request& request) {
     if (!config_.enabled) {
-        return {MiddlewareAction::Continue, nullptr};
+        return MiddlewareResult::ok();
     }
 
     stats_.total_requests++;
 
     if (is_excluded(request)) {
-        return {MiddlewareAction::Continue, nullptr};
+        return MiddlewareResult::ok();
     }
 
     // Check IP blacklist
     if (is_blacklisted(request.client_ip())) {
         stats_.blocked_requests++;
-        return {
-            MiddlewareAction::Respond,
-            std::make_unique<Response>(Response::forbidden("Access denied"))
-        };
+        return MiddlewareResult::respond(Response::forbidden("Access denied"));
     }
 
     // IP whitelist bypass
     if (is_whitelisted(request.client_ip())) {
-        return {MiddlewareAction::Continue, nullptr};
+        return MiddlewareResult::ok();
     }
 
     // Size checks
     if (request.body().size() > config_.max_request_size) {
         stats_.size_violations++;
-        return {
-            MiddlewareAction::Respond,
-            std::make_unique<Response>(Response::bad_request("Request too large"))
-        };
+        return MiddlewareResult::respond(Response::bad_request("Request too large"));
     }
 
     if (request.path().size() > config_.max_url_length) {
         stats_.size_violations++;
-        return {
-            MiddlewareAction::Respond,
-            std::make_unique<Response>(Response::bad_request("URL too long"))
-        };
+        return MiddlewareResult::respond(Response::bad_request("URL too long"));
     }
 
     // Threat inspection
@@ -112,15 +103,12 @@ MiddlewareResult WafMiddleware::on_request(Request& request) {
                     }
                 }
 
-                return {
-                    MiddlewareAction::Respond,
-                    std::make_unique<Response>(Response::forbidden("Potentially malicious request"))
-                };
+                return MiddlewareResult::respond(Response::forbidden("Potentially malicious request"));
             }
         }
     }
 
-    return {MiddlewareAction::Continue, nullptr};
+    return MiddlewareResult::ok();
 }
 
 std::vector<ThreatInfo> WafMiddleware::inspect(const Request& request) const {

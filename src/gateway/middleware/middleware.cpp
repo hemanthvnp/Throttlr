@@ -30,32 +30,32 @@ MiddlewareResult MiddlewareChain::process_request(Request& request) {
         if (middleware->phase() != MiddlewarePhase::PostBackend &&
             middleware->phase() != MiddlewarePhase::PreResponse) {
             auto result = middleware->on_request(request);
-            if (result.action != MiddlewareAction::Continue) {
+            if (result.action != MiddlewareResult::ok()) {
                 return result;
             }
         }
     }
-    return {MiddlewareAction::Continue, nullptr};
+    return MiddlewareResult::ok();
 }
 
 MiddlewareResult MiddlewareChain::process_response(Request& request, Response& response) {
     for (const auto& middleware : middlewares_) {
         auto result = middleware->on_response(request, response);
-        if (result.action != MiddlewareAction::Continue) {
+        if (result.action != MiddlewareResult::ok()) {
             return result;
         }
     }
-    return {MiddlewareAction::Continue, nullptr};
+    return MiddlewareResult::ok();
 }
 
 MiddlewareResult MiddlewareChain::process_error(Request& request, const std::string& error) {
     for (const auto& middleware : middlewares_) {
         auto result = middleware->on_error(request, error);
-        if (result.action != MiddlewareAction::Continue) {
+        if (result.action != MiddlewareResult::ok()) {
             return result;
         }
     }
-    return {MiddlewareAction::Continue, nullptr};
+    return MiddlewareResult::ok();
 }
 
 } // namespace gateway::middleware

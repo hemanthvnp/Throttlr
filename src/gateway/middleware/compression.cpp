@@ -14,19 +14,19 @@ CompressionMiddleware::CompressionMiddleware(Config config)
 MiddlewareResult CompressionMiddleware::on_response(Request& request, Response& response) {
     // Check if compression is appropriate
     if (response.body().size() < config_.min_size) {
-        return {MiddlewareAction::Continue, nullptr};
+        return MiddlewareResult::ok();
     }
 
     // Check content type
     auto content_type = response.header("Content-Type");
     if (content_type && !should_compress(*content_type)) {
-        return {MiddlewareAction::Continue, nullptr};
+        return MiddlewareResult::ok();
     }
 
     // Check Accept-Encoding
     auto accept = request.header("Accept-Encoding");
     if (!accept) {
-        return {MiddlewareAction::Continue, nullptr};
+        return MiddlewareResult::ok();
     }
 
     std::string encoding;
@@ -41,7 +41,7 @@ MiddlewareResult CompressionMiddleware::on_response(Request& request, Response& 
     }
 
     if (encoding.empty()) {
-        return {MiddlewareAction::Continue, nullptr};
+        return MiddlewareResult::ok();
     }
 
     // Compress
@@ -54,11 +54,11 @@ MiddlewareResult CompressionMiddleware::on_response(Request& request, Response& 
 
     if (!compressed.empty() && compressed.size() < response.body().size()) {
         response.set_body(std::move(compressed));
-        response.set_header("Content-Encoding", encoding);
-        response.set_header("Vary", "Accept-Encoding");
+        response.header("Content-Encoding", encoding);
+        response.header("Vary", "Accept-Encoding");
     }
 
-    return {MiddlewareAction::Continue, nullptr};
+    return MiddlewareResult::ok();
 }
 
 bool CompressionMiddleware::should_compress(std::string_view content_type) const {

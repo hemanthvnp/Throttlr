@@ -57,7 +57,7 @@ MiddlewareResult RateLimiterMiddleware::on_request(Request& request) {
     // Check if path is excluded
     for (const auto& path : config_.excluded_paths) {
         if (request.path().find(path) == 0) {
-            return {MiddlewareAction::Continue, nullptr};
+            return MiddlewareResult::ok();
         }
     }
 
@@ -70,14 +70,11 @@ MiddlewareResult RateLimiterMiddleware::on_request(Request& request) {
         auto retry_after = bucket.time_until_available(1);
         auto seconds = std::chrono::duration_cast<std::chrono::seconds>(retry_after).count();
 
-        return {
-            MiddlewareAction::Respond,
-            std::make_unique<Response>(Response::too_many_requests(static_cast<int>(seconds)))
-        };
+        return MiddlewareResult::respond(Response::too_many_requests(static_cast<int>(seconds)));
     }
 
     stats_.allowed_requests++;
-    return {MiddlewareAction::Continue, nullptr};
+    return MiddlewareResult::ok();
 }
 
 std::string RateLimiterMiddleware::generate_key(const Request& request) const {

@@ -14,15 +14,15 @@ MiddlewareResult CorsMiddleware::on_request(Request& request) {
     if (request.method() == HttpMethod::OPTIONS) {
         auto origin = request.header("Origin");
         if (!origin || !is_allowed_origin(*origin)) {
-            return {MiddlewareAction::Continue, nullptr};
+            return MiddlewareResult::ok();
         }
 
         auto response = std::make_unique<Response>(HttpStatus::NoContent);
         add_cors_headers(*response, *origin, request);
-        return {MiddlewareAction::Respond, std::move(response)};
+        return MiddlewareResult::respond(std::move(response));
     }
 
-    return {MiddlewareAction::Continue, nullptr};
+    return MiddlewareResult::ok();
 }
 
 MiddlewareResult CorsMiddleware::on_response(Request& request, Response& response) {
@@ -30,7 +30,7 @@ MiddlewareResult CorsMiddleware::on_response(Request& request, Response& respons
     if (origin && is_allowed_origin(*origin)) {
         add_cors_headers(response, *origin, request);
     }
-    return {MiddlewareAction::Continue, nullptr};
+    return MiddlewareResult::ok();
 }
 
 bool CorsMiddleware::is_allowed_origin(std::string_view origin) const {
@@ -54,11 +54,11 @@ void CorsMiddleware::add_cors_headers(Response& response, std::string_view origi
                                   config_.allowed_origins.end(), "*")
                         != config_.allowed_origins.end();
 
-    response.set_header("Access-Control-Allow-Origin",
+    response.header("Access-Control-Allow-Origin",
                         has_wildcard ? "*" : std::string(origin));
 
     if (config_.allow_credentials && !has_wildcard) {
-        response.set_header("Access-Control-Allow-Credentials", "true");
+        response.header("Access-Control-Allow-Credentials", "true");
     }
 
     // For preflight
@@ -69,7 +69,7 @@ void CorsMiddleware::add_cors_headers(Response& response, std::string_view origi
                 if (!methods.empty()) methods += ", ";
                 methods += m;
             }
-            response.set_header("Access-Control-Allow-Methods", methods);
+            response.header("Access-Control-Allow-Methods", methods);
         }
 
         if (!config_.allowed_headers.empty()) {
@@ -78,10 +78,10 @@ void CorsMiddleware::add_cors_headers(Response& response, std::string_view origi
                 if (!headers.empty()) headers += ", ";
                 headers += h;
             }
-            response.set_header("Access-Control-Allow-Headers", headers);
+            response.header("Access-Control-Allow-Headers", headers);
         }
 
-        response.set_header("Access-Control-Max-Age", std::to_string(config_.max_age));
+        response.header("Access-Control-Max-Age", std::to_string(config_.max_age));
     }
 
     if (!config_.exposed_headers.empty()) {
@@ -90,7 +90,7 @@ void CorsMiddleware::add_cors_headers(Response& response, std::string_view origi
             if (!headers.empty()) headers += ", ";
             headers += h;
         }
-        response.set_header("Access-Control-Expose-Headers", headers);
+        response.header("Access-Control-Expose-Headers", headers);
     }
 }
 

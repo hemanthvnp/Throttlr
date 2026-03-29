@@ -103,11 +103,11 @@ CacheMiddleware::~CacheMiddleware() = default;
 
 MiddlewareResult CacheMiddleware::on_request(Request& request) {
     if (!is_cacheable_method(request.method())) {
-        return {MiddlewareAction::Continue, nullptr};
+        return MiddlewareResult::ok();
     }
 
     if (should_bypass_cache(request)) {
-        return {MiddlewareAction::Continue, nullptr};
+        return MiddlewareResult::ok();
     }
 
     auto key = generate_cache_key(request);
@@ -118,32 +118,32 @@ MiddlewareResult CacheMiddleware::on_request(Request& request) {
         auto response = std::make_unique<Response>();
         // Deserialize cached response
         response->set_body(*cached);
-        response->set_header("X-Cache", "HIT");
-        return {MiddlewareAction::Respond, std::move(response)};
+        response->header("X-Cache", "HIT");
+        return MiddlewareResult::respond(std::move(response));
     }
 
     stats_.misses++;
     request.set_header("X-Cache-Key", key);
-    return {MiddlewareAction::Continue, nullptr};
+    return MiddlewareResult::ok();
 }
 
 MiddlewareResult CacheMiddleware::on_response(Request& request, Response& response) {
     if (!is_cacheable_response(response)) {
-        return {MiddlewareAction::Continue, nullptr};
+        return MiddlewareResult::ok();
     }
 
     auto key = request.header("X-Cache-Key");
     if (!key) {
-        return {MiddlewareAction::Continue, nullptr};
+        return MiddlewareResult::ok();
     }
 
     auto ttl = get_cache_ttl(response);
     if (ttl > Duration::zero()) {
         cache_->put(*key, response.body(), ttl);
-        response.set_header("X-Cache", "MISS");
+        response.header("X-Cache", "MISS");
     }
 
-    return {MiddlewareAction::Continue, nullptr};
+    return MiddlewareResult::ok();
 }
 
 std::string CacheMiddleware::generate_cache_key(const Request& request) const {

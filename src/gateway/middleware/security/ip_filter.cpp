@@ -21,21 +21,15 @@ MiddlewareResult IpFilterMiddleware::on_request(Request& request) {
 
     if (config_.mode == Config::Mode::Whitelist) {
         if (!matches) {
-            return {
-                MiddlewareAction::Respond,
-                std::make_unique<Response>(Response::forbidden("IP not allowed"))
-            };
+            return MiddlewareResult::respond(Response::forbidden("IP not allowed"));
         }
     } else {
         if (matches) {
-            return {
-                MiddlewareAction::Respond,
-                std::make_unique<Response>(Response::forbidden("IP blocked"))
-            };
+            return MiddlewareResult::respond(Response::forbidden("IP blocked"));
         }
     }
 
-    return {MiddlewareAction::Continue, nullptr};
+    return MiddlewareResult::ok();
 }
 
 void IpFilterMiddleware::add_ip(std::string ip_or_cidr) {
