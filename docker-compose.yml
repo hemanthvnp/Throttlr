@@ -69,22 +69,20 @@ services:
 
   # API Gateway
   gateway:
-    build:
-      context: .
-      target: runtime
+    image: hemanthvnp/throttlr:latest
     container_name: os-gateway
     ports:
       - "8080:8080"   # Main gateway port
       - "9091:9091"   # Admin API
     environment:
-      - GATEWAY_CONFIG=/app/config/gateway.yaml
+      - GATEWAY_CONFIG=/opt/throttlr/config/gateway.json
       - GATEWAY_LOG_LEVEL=info
       - JWT_SECRET=your-super-secret-jwt-key-change-in-production
       - REDIS_URL=redis://redis:6379
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4317
     volumes:
-      - ./config:/app/config:ro
-      - gateway_logs:/var/log/gateway
+      - ./config:/opt/throttlr/config:ro
+      - gateway_logs:/opt/throttlr/logs
     depends_on:
       redis:
         condition: service_healthy
@@ -108,11 +106,9 @@ services:
 
   # Backend service 1
   backend1:
-    build:
-      context: .
-      target: runtime
+    image: hemanthvnp/throttlr:latest
     container_name: backend-1
-    command: ["/app/backend", "9001"]
+    entrypoint: ["/usr/local/bin/backend", "9001"]
     ports:
       - "9001:9001"
     networks:
@@ -121,11 +117,9 @@ services:
 
   # Backend service 2
   backend2:
-    build:
-      context: .
-      target: runtime
+    image: hemanthvnp/throttlr:latest
     container_name: backend-2
-    command: ["/app/backend", "9002"]
+    entrypoint: ["/usr/local/bin/backend", "9002"]
     ports:
       - "9002:9002"
     networks:
@@ -134,11 +128,9 @@ services:
 
   # Backend service 3
   backend3:
-    build:
-      context: .
-      target: runtime
+    image: hemanthvnp/throttlr:latest
     container_name: backend-3
-    command: ["/app/backend", "9003"]
+    entrypoint: ["/usr/local/bin/backend", "9003"]
     ports:
       - "9003:9003"
     networks:
