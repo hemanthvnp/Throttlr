@@ -3,29 +3,23 @@ FROM ubuntu:22.04 AS builder
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install core build dependencies required for Throttlr (C++20, CMake, OpenSSL, Hiredis)
+# Install core build dependencies required for Throttlr
 RUN apt-get update && apt-get install -y \
     build-essential \
-    cmake \
     git \
-    pkg-config \
     libssl-dev \
-    libhiredis-dev
+    libhiredis-dev \
+    curl
 
 WORKDIR /app
 
-# Copy the full C++ source codebase from the repository
+# Copy the full source codebase
 COPY . .
 
-# Generate the CMake makefiles and compile using limited concurrency to prevent OOM
-RUN mkdir -p build_cmake && cd build_cmake && \
-    cmake -DCMAKE_BUILD_TYPE=Release .. && \
-    make -j2 gateway
+# Build the gateway using the Makefile
+RUN make gateway backend
 
-# Provide the backend service tool compilation as well for integrated testing (optional)
-RUN cd build_cmake && make -j2 backend || true
-
-# Execution stage: Construct a minimal container strictly for deploying the hardened gateway
+# Execution stage
 FROM ubuntu:22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -41,17 +35,19 @@ RUN apt-get update && apt-get install -y \
 RUN useradd -m -s /bin/bash throttlr
 
 WORKDIR /opt/throttlr
-RUN mkdir -p /opt/throttlr/config && chown -R throttlr:throttlr /opt/throttlr
+RUN mkdir -p /opt/throttlr/config /opt/throttlr/logs && chown -R throttlr:throttlr /opt/throttlr
 
 # Copy solely the compiled gateway engine and its internal configs from the builder layer
-COPY --from=builder --chown=throttlr:throttlr /app/build_cmake/bin/gateway /usr/local/bin/gateway
+COPY --from=builder --chown=throttlr:throttlr /app/build/gateway /usr/local/bin/gateway
+COPY --from=builder --chown=throttlr:throttlr /app/build/backend /usr/local/bin/backend
 COPY --from=builder --chown=throttlr:throttlr /app/config/*.json /opt/throttlr/config/
+COPY --from=builder --chown=throttlr:throttlr /app/config/gateway.conf /opt/throttlr/config/
 
 # Execute the container under the security of the standard non-root user
 USER throttlr
 
-# Present standard web gateway ports (8080 for HTTP / 8443 for HTTPS edge tunnel)
-EXPOSE 8080 8443
+# Present standard web gateway ports (8080 for HTTP)
+EXPOSE 8080
 
-# Start the gateway natively pulling from its deployment working directory configuration
-ENTRYPOINT ["/usr/local/bin/gateway", "-c", "config/gateway.json"]
+# Start the gateway
+ENTRYPOINT ["/usr/local/bin/gateway"]
