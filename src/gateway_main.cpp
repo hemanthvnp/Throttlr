@@ -313,7 +313,7 @@ struct RouteConfig {
 struct RateLimitConfig {
     bool enabled = true;
     bool tls_enabled = false;
-    int requests_per_second = 100;
+    double requests_per_second = 100.0;
     int burst_size = 200;
     std::string key_type = "ip";  // ip, header, path
     std::string header_name;
@@ -417,7 +417,8 @@ struct Config {
                 // Support alternative config format: requests + window_seconds
                 if (r.contains("requests") && r.contains("window_seconds")) {
                     int requests = r.value("requests", 100);
-                    cfg.rate_limit.requests_per_second = requests;
+                    int window = r.value("window_seconds", 60);
+                    cfg.rate_limit.requests_per_second = static_cast<double>(requests) / static_cast<double>(window);
                     cfg.rate_limit.burst_size = requests;
                 }
             }
