@@ -45,6 +45,7 @@ RUN mkdir -p /opt/throttlr/config && chown -R throttlr:throttlr /opt/throttlr
 
 # Copy solely the compiled gateway engine and its internal configs from the builder layer
 COPY --from=builder --chown=throttlr:throttlr /app/build_cmake/bin/gateway /usr/local/bin/gateway
+COPY --from=builder --chown=throttlr:throttlr /app/build_cmake/bin/backend /usr/local/bin/backend
 COPY --from=builder --chown=throttlr:throttlr /app/config/*.json /opt/throttlr/config/
 
 # Execute the container under the security of the standard non-root user
