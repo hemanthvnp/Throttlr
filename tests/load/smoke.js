@@ -1,7 +1,4 @@
-#!/usr/bin/env bash
-#
-# k6 load test for OS Gateway
-#
+// k6 load test for Throttlr Gateway
 
 import http from 'k6/http';
 import { check, sleep } from 'k6';
