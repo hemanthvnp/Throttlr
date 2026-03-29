@@ -20,9 +20,9 @@
     "origins": ["*"]
   },
   "backends": [
-    {"name": "backend1", "host": "127.0.0.1", "port": 9001, "weight": 1},
-    {"name": "backend2", "host": "127.0.0.1", "port": 9002, "weight": 1},
-    {"name": "backend3", "host": "127.0.0.1", "port": 9003, "weight": 1}
+    {"name": "backend1", "host": "backend1", "port": 9001, "weight": 1},
+    {"name": "backend2", "host": "backend2", "port": 9002, "weight": 1},
+    {"name": "backend3", "host": "backend3", "port": 9003, "weight": 1}
   ],
   "routes": [
     {"name": "api1", "path": "/api1.*", "backend": "default"},
