@@ -98,6 +98,8 @@ std::mutex rate_mutex;
 void save_token_buckets() {
     if (rate_limit_storage != "file") return;
     std::ofstream ofs(RL_STATE_FILE);
+    if (!ofs.is_open()) return;
+    std::lock_guard<std::mutex> lock(rate_mutex);
     for (const auto& [key, bucket] : token_buckets) {
         ofs << key << " " << std::fixed << std::setprecision(6) << bucket.tokens << " " << bucket.last_refill.time_since_epoch().count() << "\n";
     }
@@ -186,6 +188,14 @@ std::condition_variable cv;
 
 bool is_backend_alive(int port) {
     int sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (sock < 0) return false;
+
+    // Set a short timeout for health checks (1s)
+    struct timeval timeout{};
+    timeout.tv_sec = 1;
+    timeout.tv_usec = 0;
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+    setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
 
     struct sockaddr_in addr{};
     addr.sin_family = AF_INET;
@@ -199,20 +209,31 @@ bool is_backend_alive(int port) {
 }
 
 void health_checker() {
-    while (true) {
-        for (auto &backend : backend_status) {
+    while (!shutdown_requested) {
+        // Copy backend status to iterate safely
+        std::map<int, bool> backends;
+        {
+            std::lock_guard<std::mutex> lock(health_mutex);
+            backends = backend_status;
+        }
+
+        for (auto &backend : backends) {
             bool alive = is_backend_alive(backend.first);
 
             {
                 std::lock_guard<std::mutex> lock(health_mutex);
-                backend.second = alive;
+                if (backend_status[backend.first] != alive) {
+                    backend_status[backend.first] = alive;
+                    std::cout << "[HEALTH] Backend " << backend.first
+                              << (alive ? " is UP\n" : " is DOWN\n");
+                }
             }
-
-            std::cout << "Backend " << backend.first
-                      << (alive ? " is UP\n" : " is DOWN\n");
         }
 
-        sleep(5);
+        // Use a more responsive sleep that can be interrupted by shutdown
+        for (int i = 0; i < 50 && !shutdown_requested; ++i) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
     }
 }
 
@@ -228,8 +249,10 @@ int route_request(const std::string& request) {
     else
         candidates = {9003};
 
+    std::lock_guard<std::mutex> lock(health_mutex);
+    
+    // First try preferred candidates
     for (int port : candidates) {
-        std::lock_guard<std::mutex> lock(health_mutex);
         auto& cb = circuit_breakers[port];
         if (cb.open) {
             auto now = std::chrono::steady_clock::now();
@@ -240,11 +263,12 @@ int route_request(const std::string& request) {
                 continue; // skip open circuit
             }
         }
-        if (backend_status[port]) return port;
+        if (backend_status.count(port) && backend_status[port]) return port;
     }
 
-    for (auto &b : backend_status) {
-        auto& cb = circuit_breakers[b.first];
+    // Fallback to any healthy backend
+    for (auto const& [port, alive] : backend_status) {
+        auto& cb = circuit_breakers[port];
         if (cb.open) {
             auto now = std::chrono::steady_clock::now();
             if (std::chrono::duration_cast<std::chrono::seconds>(now - cb.open_time).count() > CB_COOLDOWN_SECONDS) {
@@ -254,7 +278,7 @@ int route_request(const std::string& request) {
                 continue;
             }
         }
-        if (b.second) return b.first;
+        if (alive) return port;
     }
 
     return -1;
@@ -278,6 +302,10 @@ void handle_client(int client_socket, sockaddr_in client_addr) {
     char buffer[4096] = {0};
     int bytes_read = read(client_socket, buffer, sizeof(buffer));
     if (bytes_read <= 0) {
+        if (bytes_read < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+            std::string response = "HTTP/1.1 408 Request Timeout\r\nContent-Length: 0\r\n\r\n";
+            send(client_socket, response.c_str(), response.size(), 0);
+        }
         close(client_socket);
         return;
     }
@@ -396,29 +424,70 @@ void handle_client(int client_socket, sockaddr_in client_addr) {
     backend_addr.sin_family = AF_INET;
     backend_addr.sin_port = htons(backend_port);
     inet_pton(AF_INET, "127.0.0.1", &backend_addr.sin_addr);
+
+    // Set timeout for backend connection
+    struct timeval backend_timeout{};
+    backend_timeout.tv_sec = 2;
+    setsockopt(backend_sock, SOL_SOCKET, SO_RCVTIMEO, &backend_timeout, sizeof(backend_timeout));
+    setsockopt(backend_sock, SOL_SOCKET, SO_SNDTIMEO, &backend_timeout, sizeof(backend_timeout));
+
     if (connect(backend_sock, (sockaddr*)&backend_addr, sizeof(backend_addr)) < 0) {
         // Circuit breaker: record failure
-        circuit_breakers[backend_port].failure_count++;
-        if (circuit_breakers[backend_port].failure_count >= CB_FAILURE_THRESHOLD) {
-            circuit_breakers[backend_port].open = true;
-            circuit_breakers[backend_port].open_time = std::chrono::steady_clock::now();
-            if (rate_limit_logging) {
-                std::cout << "[CIRCUIT BREAKER] Backend " << backend_port << " OPENED\n";
+        {
+            std::lock_guard<std::mutex> lock(health_mutex);
+            circuit_breakers[backend_port].failure_count++;
+            if (circuit_breakers[backend_port].failure_count >= CB_FAILURE_THRESHOLD) {
+                circuit_breakers[backend_port].open = true;
+                circuit_breakers[backend_port].open_time = std::chrono::steady_clock::now();
+                if (rate_limit_logging) {
+                    std::cout << "[CIRCUIT BREAKER] Backend " << backend_port << " OPENED due to connection failure\n";
+                }
             }
         }
+        std::string response =
+            "HTTP/1.1 502 Bad Gateway\r\n"
+            "Content-Type: application/json\r\n"
+            "Content-Length: 42\r\n\r\n"
+            "{\"error\":\"Failed to connect to backend\"}";
+        send(client_socket, response.c_str(), response.size(), 0);
+        close(backend_sock);
         close(client_socket);
         return;
     } else {
         // Circuit breaker: reset on success
+        std::lock_guard<std::mutex> lock(health_mutex);
         circuit_breakers[backend_port].failure_count = 0;
     }
+
     // Forward request
-    send(backend_sock, buffer, bytes_read, 0);
+    if (send(backend_sock, buffer, bytes_read, 0) < 0) {
+        std::string response =
+            "HTTP/1.1 502 Bad Gateway\r\n"
+            "Content-Type: application/json\r\n"
+            "Content-Length: 38\r\n\r\n"
+            "{\"error\":\"Failed to send to backend\"}";
+        send(client_socket, response.c_str(), response.size(), 0);
+        close(backend_sock);
+        close(client_socket);
+        return;
+    }
+
     // Read response
-    char response[4096] = {0};
-    int resp_bytes = read(backend_sock, response, sizeof(response));
-    // Send back
-    send(client_socket, response, resp_bytes, 0);
+    char response_buf[4096] = {0};
+    int resp_bytes = read(backend_sock, response_buf, sizeof(response_buf));
+
+    if (resp_bytes <= 0) {
+        std::string response =
+            "HTTP/1.1 504 Gateway Timeout\r\n"
+            "Content-Type: application/json\r\n"
+            "Content-Length: 40\r\n\r\n"
+            "{\"error\":\"No response from backend\"}";
+        send(client_socket, response.c_str(), response.size(), 0);
+    } else {
+        // Send back
+        send(client_socket, response_buf, resp_bytes, 0);
+    }
+
     close(backend_sock);
     close(client_socket);
 }
