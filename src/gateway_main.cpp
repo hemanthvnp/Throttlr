@@ -1865,7 +1865,12 @@ private:
 
         while (running_) {
             ssize_t n = client_stream.read(read_buf, sizeof(read_buf));
-            if (n <= 0) break;
+            if (n <= 0) {
+                if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+                    send_response(client_stream, HttpResponse::error(HttpStatus::RequestTimeout, "Client request timed out"));
+                }
+                break;
+            }
             buffer.append(read_buf, static_cast<size_t>(n));
 
             auto header_end = buffer.find("\r\n\r\n");

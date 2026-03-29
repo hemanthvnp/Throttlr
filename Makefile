@@ -3,13 +3,13 @@ test:
 	$(CXX) $(CXXFLAGS) -lhiredis tests/test_ratelimiter.cpp src/authenticator.cpp src/redis_rate_limiter.cpp -o build/test_ratelimiter
 	./build/test_ratelimiter
 CXX = g++
-CXXFLAGS = -std=c++17 -Wall -Wextra -pthread -O2 -Iinclude -Ijwt-cpp/include
+CXXFLAGS = -std=c++17 -Wall -Wextra -pthread -O2 -Iinclude
 
 all: gateway backend
 
 gateway:
 	mkdir -p build
-	$(CXX) $(CXXFLAGS) src/server.cpp src/authenticator.cpp src/redis_rate_limiter.cpp -o build/gateway -lhiredis -lcrypto -lssl
+	$(CXX) $(CXXFLAGS) -lhiredis src/server.cpp src/authenticator.cpp src/redis_rate_limiter.cpp -o build/gateway
 
 backend:
 	mkdir -p build
