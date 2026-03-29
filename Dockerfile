@@ -20,7 +20,7 @@ COPY . .
 RUN make gateway backend
 
 # Execution stage
-FROM ubuntu:22.04
+FROM ubuntu:22.04 AS runtime
 
 ENV DEBIAN_FRONTEND=noninteractive
 
