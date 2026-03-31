@@ -20,13 +20,40 @@
     "origins": ["*"]
   },
   "backends": [
-    {"name": "backend1", "host": "backend1", "port": 9001, "weight": 1},
-    {"name": "backend2", "host": "backend2", "port": 9002, "weight": 1},
-    {"name": "backend3", "host": "backend3", "port": 9003, "weight": 1}
+    {
+      "name": "backend1",
+      "host": "172.31.26.247",
+      "port": 9001,
+      "weight": 1
+    },
+    {
+      "name": "backend2",
+      "host": "172.31.26.247",
+      "port": 9002,
+      "weight": 1
+    },
+    {
+      "name": "backend3",
+      "host": "172.31.26.247",
+      "port": 9003,
+      "weight": 1
+    }
   ],
   "routes": [
-    {"name": "api1", "path": "/api1.*", "backend": "default"},
-    {"name": "api2", "path": "/api2.*", "backend": "default"},
-    {"name": "default", "path": "/.*", "backend": "default"}
+    {
+      "name": "api1",
+      "path": "/api1.*",
+      "backend": "backend1"
+    },
+    {
+      "name": "api2",
+      "path": "/api2.*",
+      "backend": "backend2"
+    },
+    {
+      "name": "default",
+      "path": "/.*",
+      "backend": "backend3"
+    }
   ]
 }
