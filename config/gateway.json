@@ -1,59 +1,20 @@
 {
   "server": {
     "host": "0.0.0.0",
-    "port": 8080,
-    "worker_threads": 0,
-    "max_connections": 10000
+    "port": 443,
+    "tls_enabled": true,
+    "tls_cert_file": "/opt/throttlr/certs/cert.pem",
+    "tls_key_file": "/opt/throttlr/certs/key.pem",
+    "jwt_secret": "my-secure-cloud-key"
   },
-  "rate_limit": {
-    "enabled": true,
-    "requests": 100,
-    "window_seconds": 60
-  },
-  "jwt": {
-    "enabled": false,
-    "secret": "",
-    "issuer": "os-gateway"
-  },
-  "cors": {
-    "enabled": true,
-    "origins": ["*"]
-  },
+  "rate_limit": {"enabled": true, "requests": 5, "window_seconds": 60, "key_type": "path"},
   "backends": [
-    {
-      "name": "backend1",
-      "host": "172.31.26.247",
-      "port": 9001,
-      "weight": 1
-    },
-    {
-      "name": "backend2",
-      "host": "172.31.26.247",
-      "port": 9002,
-      "weight": 1
-    },
-    {
-      "name": "backend3",
-      "host": "172.31.26.247",
-      "port": 9003,
-      "weight": 1
-    }
+    {"name": "backend1", "host": "127.0.0.1", "port": 9001, "weight": 1},
+    {"name": "backend2", "host": "127.0.0.1", "port": 9002, "weight": 1},
+    {"name": "backend3", "host": "127.0.0.1", "port": 9003, "weight": 1}
   ],
   "routes": [
-    {
-      "name": "api1",
-      "path": "/api1.*",
-      "backend": "backend1"
-    },
-    {
-      "name": "api2",
-      "path": "/api2.*",
-      "backend": "backend2"
-    },
-    {
-      "name": "default",
-      "path": "/.*",
-      "backend": "backend3"
-    }
+    {"name": "protected", "path": "/api/protected.*", "backend": "default", "auth_required": true},
+    {"name": "public", "path": "/api/public.*", "backend": "default", "auth_required": false}
   ]
 }

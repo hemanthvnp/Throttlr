@@ -1660,6 +1660,11 @@ public:
 
         spdlog::info("Listening on {}:{}", config_.host, config_.port);
 
+        // Create redirect server if TLS is enabled on 443
+        if (config_.tls_enabled && config_.port == 443) {
+            redirect_thread_ = std::thread([this] { redirect_loop(); });
+        }
+
         // Accept loop
         accept_loop();
     }
@@ -1671,6 +1676,17 @@ public:
 
         if (discovery_thread_.joinable()) {
             discovery_thread_.join();
+        }
+
+        // Close redirect socket
+        if (redirect_fd_ >= 0) {
+            shutdown(redirect_fd_, SHUT_RDWR);
+            close(redirect_fd_);
+            redirect_fd_ = -1;
+        }
+
+        if (redirect_thread_.joinable()) {
+            redirect_thread_.join();
         }
 
         // Close server socket
@@ -1750,6 +1766,68 @@ private:
                     // Ignore parse errors
                 }
             }
+        }
+    }
+    void redirect_loop() {
+        redirect_fd_ = socket(AF_INET, SOCK_STREAM, 0);
+        if (redirect_fd_ < 0) return;
+
+        int opt = 1;
+        setsockopt(redirect_fd_, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+
+        sockaddr_in addr{};
+        addr.sin_family = AF_INET;
+        addr.sin_port = htons(80);
+        addr.sin_addr.s_addr = INADDR_ANY;
+
+        if (bind(redirect_fd_, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0) {
+            close(redirect_fd_);
+            redirect_fd_ = -1;
+            return;
+        }
+
+        if (listen(redirect_fd_, SOMAXCONN) < 0) {
+            close(redirect_fd_);
+            redirect_fd_ = -1;
+            return;
+        }
+
+        spdlog::info("HTTP Redirect listening on port 80");
+
+        while (running_) {
+            sockaddr_in client_addr{};
+            socklen_t client_len = sizeof(client_addr);
+            int client_fd = accept(redirect_fd_, reinterpret_cast<sockaddr*>(&client_addr), &client_len);
+            
+            if (client_fd < 0) {
+                if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                    std::this_thread::sleep_for(10ms);
+                    continue;
+                }
+                break;
+            }
+
+            pool_->submit([this, client_fd] {
+                char buf[2048];
+                ssize_t n = recv(client_fd, buf, sizeof(buf) - 1, 0);
+                if (n > 0) {
+                    buf[n] = '\0';
+                    std::string request(buf);
+                    auto host_start = request.find("Host: ");
+                    std::string host = config_.host;
+                    if (host_start != std::string::npos) {
+                        auto host_end = request.find("\r\n", host_start);
+                        host = request.substr(host_start + 6, host_end - host_start - 6);
+                    }
+
+                    std::string response = "HTTP/1.1 301 Moved Permanently\r\n"
+                                           "Location: https://" + host + "/\r\n"
+                                           "Content-Length: 0\r\n"
+                                           "Connection: close\r\n\r\n";
+                    send(client_fd, response.c_str(), response.length(), 0);
+                }
+                close(client_fd);
+            });
         }
     }
 
@@ -2347,11 +2425,13 @@ private:
     AccessLogger access_logger_;
 
     int server_fd_ = -1;
+    int redirect_fd_ = -1;
     std::atomic<bool> running_;
     std::atomic<int> active_connections_{0};
     std::unique_ptr<ThreadPool> pool_;
     std::thread health_thread_;
     std::thread cleanup_thread_;
+    std::thread redirect_thread_;
     TimePoint start_time_;
 };
 
