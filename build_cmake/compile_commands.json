@@ -1,0 +1,110 @@
+[
+{
+  "directory": "/home/ashavad/os-package/build_cmake",
+  "command": "/usr/bin/c++ -DSPDLOG_COMPILED_LIB -I/home/ashavad/os-package/include -I/home/ashavad/os-package/build_cmake/_deps/json-src/include -I/home/ashavad/os-package/build_cmake/_deps/spdlog-src/include -I/home/ashavad/os-package/build_cmake/_deps/jwt-src/include -O3 -DNDEBUG -std=gnu++20 -Wall -Wextra -O2 -o CMakeFiles/gateway.dir/src/gateway_main.cpp.o -c /home/ashavad/os-package/src/gateway_main.cpp",
+  "file": "/home/ashavad/os-package/src/gateway_main.cpp",
+  "output": "CMakeFiles/gateway.dir/src/gateway_main.cpp.o"
+},
+{
+  "directory": "/home/ashavad/os-package/build_cmake",
+  "command": "/usr/bin/c++ -DSPDLOG_COMPILED_LIB -I/home/ashavad/os-package/include -I/home/ashavad/os-package/build_cmake/_deps/json-src/include -I/home/ashavad/os-package/build_cmake/_deps/spdlog-src/include -I/home/ashavad/os-package/build_cmake/_deps/jwt-src/include -O3 -DNDEBUG -std=gnu++20 -Wall -Wextra -O2 -o CMakeFiles/gateway.dir/src/authenticator.cpp.o -c /home/ashavad/os-package/src/authenticator.cpp",
+  "file": "/home/ashavad/os-package/src/authenticator.cpp",
+  "output": "CMakeFiles/gateway.dir/src/authenticator.cpp.o"
+},
+{
+  "directory": "/home/ashavad/os-package/build_cmake",
+  "command": "/usr/bin/c++ -DSPDLOG_COMPILED_LIB -I/home/ashavad/os-package/include -I/home/ashavad/os-package/build_cmake/_deps/json-src/include -I/home/ashavad/os-package/build_cmake/_deps/spdlog-src/include -I/home/ashavad/os-package/build_cmake/_deps/jwt-src/include -O3 -DNDEBUG -std=gnu++20 -Wall -Wextra -O2 -o CMakeFiles/gateway.dir/src/redis_rate_limiter.cpp.o -c /home/ashavad/os-package/src/redis_rate_limiter.cpp",
+  "file": "/home/ashavad/os-package/src/redis_rate_limiter.cpp",
+  "output": "CMakeFiles/gateway.dir/src/redis_rate_limiter.cpp.o"
+},
+{
+  "directory": "/home/ashavad/os-package/build_cmake",
+  "command": "/usr/bin/c++   -O3 -DNDEBUG -std=gnu++20 -Wall -Wextra -O2 -o CMakeFiles/backend.dir/src/backend.cpp.o -c /home/ashavad/os-package/src/backend.cpp",
+  "file": "/home/ashavad/os-package/src/backend.cpp",
+  "output": "CMakeFiles/backend.dir/src/backend.cpp.o"
+},
+{
+  "directory": "/home/ashavad/os-package/build_cmake/_deps/spdlog-build",
+  "command": "/usr/bin/c++ -DSPDLOG_COMPILED_LIB -I/home/ashavad/os-package/build_cmake/_deps/spdlog-src/include -O3 -DNDEBUG -std=c++20 -Wall -Wextra -O2 -o CMakeFiles/spdlog.dir/src/spdlog.cpp.o -c /home/ashavad/os-package/build_cmake/_deps/spdlog-src/src/spdlog.cpp",
+  "file": "/home/ashavad/os-package/build_cmake/_deps/spdlog-src/src/spdlog.cpp",
+  "output": "_deps/spdlog-build/CMakeFiles/spdlog.dir/src/spdlog.cpp.o"
+},
+{
+  "directory": "/home/ashavad/os-package/build_cmake/_deps/spdlog-build",
+  "command": "/usr/bin/c++ -DSPDLOG_COMPILED_LIB -I/home/ashavad/os-package/build_cmake/_deps/spdlog-src/include -O3 -DNDEBUG -std=c++20 -Wall -Wextra -O2 -o CMakeFiles/spdlog.dir/src/stdout_sinks.cpp.o -c /home/ashavad/os-package/build_cmake/_deps/spdlog-src/src/stdout_sinks.cpp",
+  "file": "/home/ashavad/os-package/build_cmake/_deps/spdlog-src/src/stdout_sinks.cpp",
+  "output": "_deps/spdlog-build/CMakeFiles/spdlog.dir/src/stdout_sinks.cpp.o"
+},
+{
+  "directory": "/home/ashavad/os-package/build_cmake/_deps/spdlog-build",
+  "command": "/usr/bin/c++ -DSPDLOG_COMPILED_LIB -I/home/ashavad/os-package/build_cmake/_deps/spdlog-src/include -O3 -DNDEBUG -std=c++20 -Wall -Wextra -O2 -o CMakeFiles/spdlog.dir/src/color_sinks.cpp.o -c /home/ashavad/os-package/build_cmake/_deps/spdlog-src/src/color_sinks.cpp",
+  "file": "/home/ashavad/os-package/build_cmake/_deps/spdlog-src/src/color_sinks.cpp",
+  "output": "_deps/spdlog-build/CMakeFiles/spdlog.dir/src/color_sinks.cpp.o"
+},
+{
+  "directory": "/home/ashavad/os-package/build_cmake/_deps/spdlog-build",
+  "command": "/usr/bin/c++ -DSPDLOG_COMPILED_LIB -I/home/ashavad/os-package/build_cmake/_deps/spdlog-src/include -O3 -DNDEBUG -std=c++20 -Wall -Wextra -O2 -o CMakeFiles/spdlog.dir/src/file_sinks.cpp.o -c /home/ashavad/os-package/build_cmake/_deps/spdlog-src/src/file_sinks.cpp",
+  "file": "/home/ashavad/os-package/build_cmake/_deps/spdlog-src/src/file_sinks.cpp",
+  "output": "_deps/spdlog-build/CMakeFiles/spdlog.dir/src/file_sinks.cpp.o"
+},
+{
+  "directory": "/home/ashavad/os-package/build_cmake/_deps/spdlog-build",
+  "command": "/usr/bin/c++ -DSPDLOG_COMPILED_LIB -I/home/ashavad/os-package/build_cmake/_deps/spdlog-src/include -O3 -DNDEBUG -std=c++20 -Wall -Wextra -O2 -o CMakeFiles/spdlog.dir/src/async.cpp.o -c /home/ashavad/os-package/build_cmake/_deps/spdlog-src/src/async.cpp",
+  "file": "/home/ashavad/os-package/build_cmake/_deps/spdlog-src/src/async.cpp",
+  "output": "_deps/spdlog-build/CMakeFiles/spdlog.dir/src/async.cpp.o"
+},
+{
+  "directory": "/home/ashavad/os-package/build_cmake/_deps/spdlog-build",
+  "command": "/usr/bin/c++ -DSPDLOG_COMPILED_LIB -I/home/ashavad/os-package/build_cmake/_deps/spdlog-src/include -O3 -DNDEBUG -std=c++20 -Wall -Wextra -O2 -o CMakeFiles/spdlog.dir/src/cfg.cpp.o -c /home/ashavad/os-package/build_cmake/_deps/spdlog-src/src/cfg.cpp",
+  "file": "/home/ashavad/os-package/build_cmake/_deps/spdlog-src/src/cfg.cpp",
+  "output": "_deps/spdlog-build/CMakeFiles/spdlog.dir/src/cfg.cpp.o"
+},
+{
+  "directory": "/home/ashavad/os-package/build_cmake/_deps/spdlog-build",
+  "command": "/usr/bin/c++ -DSPDLOG_COMPILED_LIB -I/home/ashavad/os-package/build_cmake/_deps/spdlog-src/include -O3 -DNDEBUG -std=c++20 -Wall -Wextra -O2 -o CMakeFiles/spdlog.dir/src/bundled_fmtlib_format.cpp.o -c /home/ashavad/os-package/build_cmake/_deps/spdlog-src/src/bundled_fmtlib_format.cpp",
+  "file": "/home/ashavad/os-package/build_cmake/_deps/spdlog-src/src/bundled_fmtlib_format.cpp",
+  "output": "_deps/spdlog-build/CMakeFiles/spdlog.dir/src/bundled_fmtlib_format.cpp.o"
+},
+{
+  "directory": "/home/ashavad/os-package/build_cmake/_deps/jwt-build/example",
+  "command": "/usr/bin/c++  -I/home/ashavad/os-package/build_cmake/_deps/jwt-src/include -O3 -DNDEBUG -std=gnu++20 -Wall -Wextra -O2 -o CMakeFiles/print-claims.dir/print-claims.cpp.o -c /home/ashavad/os-package/build_cmake/_deps/jwt-src/example/print-claims.cpp",
+  "file": "/home/ashavad/os-package/build_cmake/_deps/jwt-src/example/print-claims.cpp",
+  "output": "_deps/jwt-build/example/CMakeFiles/print-claims.dir/print-claims.cpp.o"
+},
+{
+  "directory": "/home/ashavad/os-package/build_cmake/_deps/jwt-build/example",
+  "command": "/usr/bin/c++  -I/home/ashavad/os-package/build_cmake/_deps/jwt-src/include -O3 -DNDEBUG -std=gnu++20 -Wall -Wextra -O2 -o CMakeFiles/private-claims.dir/private-claims.cpp.o -c /home/ashavad/os-package/build_cmake/_deps/jwt-src/example/private-claims.cpp",
+  "file": "/home/ashavad/os-package/build_cmake/_deps/jwt-src/example/private-claims.cpp",
+  "output": "_deps/jwt-build/example/CMakeFiles/private-claims.dir/private-claims.cpp.o"
+},
+{
+  "directory": "/home/ashavad/os-package/build_cmake/_deps/jwt-build/example",
+  "command": "/usr/bin/c++  -I/home/ashavad/os-package/build_cmake/_deps/jwt-src/include -O3 -DNDEBUG -std=gnu++20 -Wall -Wextra -O2 -o CMakeFiles/rsa-create.dir/rsa-create.cpp.o -c /home/ashavad/os-package/build_cmake/_deps/jwt-src/example/rsa-create.cpp",
+  "file": "/home/ashavad/os-package/build_cmake/_deps/jwt-src/example/rsa-create.cpp",
+  "output": "_deps/jwt-build/example/CMakeFiles/rsa-create.dir/rsa-create.cpp.o"
+},
+{
+  "directory": "/home/ashavad/os-package/build_cmake/_deps/jwt-build/example",
+  "command": "/usr/bin/c++  -I/home/ashavad/os-package/build_cmake/_deps/jwt-src/include -O3 -DNDEBUG -std=gnu++20 -Wall -Wextra -O2 -o CMakeFiles/rsa-verify.dir/rsa-verify.cpp.o -c /home/ashavad/os-package/build_cmake/_deps/jwt-src/example/rsa-verify.cpp",
+  "file": "/home/ashavad/os-package/build_cmake/_deps/jwt-src/example/rsa-verify.cpp",
+  "output": "_deps/jwt-build/example/CMakeFiles/rsa-verify.dir/rsa-verify.cpp.o"
+},
+{
+  "directory": "/home/ashavad/os-package/build_cmake/_deps/jwt-build/example",
+  "command": "/usr/bin/c++  -I/home/ashavad/os-package/build_cmake/_deps/jwt-src/include -O3 -DNDEBUG -std=gnu++20 -Wall -Wextra -O2 -o CMakeFiles/jwks-verify.dir/jwks-verify.cpp.o -c /home/ashavad/os-package/build_cmake/_deps/jwt-src/example/jwks-verify.cpp",
+  "file": "/home/ashavad/os-package/build_cmake/_deps/jwt-src/example/jwks-verify.cpp",
+  "output": "_deps/jwt-build/example/CMakeFiles/jwks-verify.dir/jwks-verify.cpp.o"
+},
+{
+  "directory": "/home/ashavad/os-package/build_cmake/_deps/jwt-build/example",
+  "command": "/usr/bin/c++  -I/home/ashavad/os-package/build_cmake/_deps/jwt-src/include -O3 -DNDEBUG -std=gnu++20 -Wall -Wextra -O2 -o CMakeFiles/es256k.dir/es256k.cpp.o -c /home/ashavad/os-package/build_cmake/_deps/jwt-src/example/es256k.cpp",
+  "file": "/home/ashavad/os-package/build_cmake/_deps/jwt-src/example/es256k.cpp",
+  "output": "_deps/jwt-build/example/CMakeFiles/es256k.dir/es256k.cpp.o"
+},
+{
+  "directory": "/home/ashavad/os-package/build_cmake/_deps/jwt-build/example/traits",
+  "command": "/usr/bin/c++  -I/home/ashavad/os-package/build_cmake/_deps/json-src/include -I/home/ashavad/os-package/build_cmake/_deps/jwt-src/include -O3 -DNDEBUG -std=gnu++20 -Wall -Wextra -O2 -o CMakeFiles/nlohmann-json.dir/nlohmann-json.cpp.o -c /home/ashavad/os-package/build_cmake/_deps/jwt-src/example/traits/nlohmann-json.cpp",
+  "file": "/home/ashavad/os-package/build_cmake/_deps/jwt-src/example/traits/nlohmann-json.cpp",
+  "output": "_deps/jwt-build/example/traits/CMakeFiles/nlohmann-json.dir/nlohmann-json.cpp.o"
+}
+]

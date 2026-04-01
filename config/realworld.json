@@ -7,8 +7,8 @@
   },
   "rate_limit": {
     "enabled": true,
-    "requests": 20,
-    "window_seconds": 60
+    "requests_per_second": 5,
+    "burst_size": 5
   },
   "cors": {
     "enabled": true,
