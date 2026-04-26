@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential cmake libssl-dev libhiredis-dev pkg-config curl
+
+    - name: Configure
+      run: |
+        mkdir -p build_cmake
+        cd build_cmake
+        cmake -DCMAKE_BUILD_TYPE=Release ..
+
+    - name: Build
+      run: |
+        cd build_cmake
+        make -j$(nproc) gateway
+
+    - name: Smoke test
+      run: |
+        cd build_cmake
+        ./bin/backend 9001 &
+        ./bin/backend 9002 &
+        ./bin/backend 9003 &
+        sleep 1
+        ./bin/gateway -c ../config/local.json &
+        sleep 2
+        curl -f http://localhost:8080/health
+        curl -f http://localhost:8080/ready
+        curl -f http://localhost:8080/_admin/stats
+        curl -f http://localhost:8080/api/public/test
+        kill %4 || true
+
+  docker:
+    runs-on: ubuntu-22.04
+    needs: build
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Build Docker image
+      run: docker build -t throttlr:latest .

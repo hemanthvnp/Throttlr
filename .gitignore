@@ -1,0 +1,46 @@
+# Build artifacts
+build/
+build_cmake/
+build_test/
+cmake-build-*/
+*.o
+*.out
+*.a
+*.so
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Logs
+logs/
+*.log
+
+# Dependencies
+_deps/
+
+# Coverage
+coverage/
+*.gcov
+*.gcda
+*.gcno
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Security & SSH
+certs/
+*.pem
+*.key
+*.crt
+
+# Private docs (interview prep, resume notes)
+docs/INTERVIEW_PREP.md
+docs/RESUME_BULLETS.md
+
+# Claude memory
+.claude/

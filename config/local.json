@@ -1,0 +1,28 @@
+{
+  "server": {
+    "host": "0.0.0.0",
+    "port": 8080,
+    "worker_threads": 0,
+    "max_connections": 10000,
+    "jwt_secret": "dev-secret-change-in-production"
+  },
+  "rate_limit": {
+    "enabled": true,
+    "requests": 100,
+    "window_seconds": 60,
+    "key_type": "ip"
+  },
+  "cors": {
+    "enabled": true,
+    "origins": ["*"]
+  },
+  "backends": [
+    {"name": "backend1", "host": "127.0.0.1", "port": 9001, "weight": 1},
+    {"name": "backend2", "host": "127.0.0.1", "port": 9002, "weight": 1},
+    {"name": "backend3", "host": "127.0.0.1", "port": 9003, "weight": 1}
+  ],
+  "routes": [
+    {"name": "protected", "path": "/api/protected.*", "backend": "default", "auth_required": true},
+    {"name": "public",    "path": "/.*",               "backend": "default", "auth_required": false}
+  ]
+}
