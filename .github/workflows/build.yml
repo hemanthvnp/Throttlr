@@ -27,7 +27,7 @@ jobs:
     - name: Build
       run: |
         cd build_cmake
-        make -j$(nproc) gateway
+        make -j$(nproc)
 
     - name: Smoke test
       run: |

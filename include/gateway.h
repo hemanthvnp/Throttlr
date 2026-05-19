@@ -9,7 +9,7 @@
 #include "load_balancer.h"
 #include "router.h"
 #include "metrics.h"
-#include "../include/authenticator.h"
+#include "authenticator.h"
 
 // g_reload_flag is set by SIGHUP handler in main.cpp and read in Gateway::accept_loop()
 extern std::atomic<bool> g_reload_flag;
