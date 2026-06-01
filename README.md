@@ -4,6 +4,39 @@ A production-grade API gateway written in C++20. Handles TLS termination, JWT au
 
 ---
 
+## Live Demo
+
+Deployed on Render: **https://throttlr-gateway.onrender.com**
+
+> Free tier spins down after 15 min idle — first request may take ~30s to wake.
+
+```bash
+# Health check
+curl https://throttlr-gateway.onrender.com/health
+# {"status":"healthy","uptime_seconds":100,"version":"2.0.0"}
+
+# Readiness probe
+curl https://throttlr-gateway.onrender.com/ready
+# {"ready":true}
+
+# Backend health + circuit breaker states + connection pool stats
+curl https://throttlr-gateway.onrender.com/_admin/backends
+
+# Request metrics + uptime
+curl https://throttlr-gateway.onrender.com/_admin/stats
+
+# Prometheus metrics
+curl https://throttlr-gateway.onrender.com/metrics
+
+# Rate limit headers (X-RateLimit-Limit, X-RateLimit-Remaining, X-Request-ID)
+curl -I https://throttlr-gateway.onrender.com/api/public/test
+
+# Trigger rate limiter — 429 after 100 requests/min per IP
+for i in $(seq 1 105); do curl -s -o /dev/null -w "%{http_code}\n" https://throttlr-gateway.onrender.com/api/public/test; done
+```
+
+---
+
 ## Features
 
 - **HTTP/1.1 reverse proxy** — keep-alive, connection pooling to backends, request tracing via `X-Request-ID`
