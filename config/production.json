@@ -1,0 +1,52 @@
+{
+  "server": {
+    "host": "0.0.0.0",
+    "port": 8443,
+    "tls_enabled": true,
+    "tls_cert_file": "certs/cert.pem",
+    "tls_key_file": "certs/key.pem",
+    "jwt_secret": "enterprise_production_secret_key_9901",
+    "worker_threads": 4,
+    "max_connections": 20000,
+    "request_timeout_ms": 15000,
+    "idle_timeout_ms": 300000,
+    "access_log_enabled": true
+  },
+  "rate_limit": {
+    "enabled": true,
+    "requests_per_second": 100,
+    "burst_size": 200,
+    "storage": "local"
+  },
+  "backends": [
+    {
+      "name": "auth-service",
+      "host": "10.0.1.5",
+      "port": 3000,
+      "health_path": "/health",
+      "group": "auth"
+    },
+    {
+      "name": "billing-service",
+      "host": "10.0.1.6",
+      "port": 4000,
+      "health_path": "/health",
+      "group": "billing"
+    }
+  ],
+  "routes": [
+    {
+      "name": "auth-routes",
+      "path": "^/api/auth/.*",
+      "backend": "auth",
+      "auth_required": false
+    },
+    {
+      "name": "billing-routes",
+      "path": "^/api/billing/.*",
+      "backend": "billing",
+      "auth_required": true,
+      "rate_limit_enabled": true
+    }
+  ]
+}

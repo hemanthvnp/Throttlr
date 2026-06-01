@@ -1,0 +1,27 @@
+apiVersion: v2
+name: os-gateway
+description: Enterprise-grade C++ API Gateway
+type: application
+version: 2.0.0
+appVersion: "2.0.0"
+
+keywords:
+  - api-gateway
+  - reverse-proxy
+  - load-balancer
+  - rate-limiting
+  - circuit-breaker
+
+home: https://github.com/os-gateway/os-gateway
+sources:
+  - https://github.com/os-gateway/os-gateway
+
+maintainers:
+  - name: OS Gateway Team
+    email: team@os-gateway.io
+
+dependencies:
+  - name: redis
+    version: "18.x.x"
+    repository: https://charts.bitnami.com/bitnami
+    condition: redis.enabled
