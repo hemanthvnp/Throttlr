@@ -24,7 +24,14 @@ public:
         }
     }
 
-    int acquire(int timeout_ms = 5000) {
+    // was_reused (if provided) reports whether the returned fd came from an
+    // existing pooled connection rather than a freshly-established one. The
+    // MSG_PEEK liveness check below is inherently racy — a keep-alive
+    // connection the peer closes between the check and the caller's next
+    // send()/recv() looks alive right up until it isn't — so callers use
+    // this to know when a first failure is worth a transparent retry on a
+    // new connection rather than a real backend error.
+    int acquire(int timeout_ms = 5000, bool* was_reused = nullptr) {
         std::unique_lock lock(mutex_);
 
         // Try to find an available connection
@@ -34,6 +41,7 @@ public:
                 if (is_connection_alive(conn.fd)) {
                     conn.in_use    = true;
                     conn.last_used = Clock::now();
+                    if (was_reused) *was_reused = true;
                     return conn.fd;
                 } else {
                     close(conn.fd);
@@ -42,16 +50,31 @@ public:
             }
         }
 
-        // Create new connection if pool not full
-        if (connections_.size() < static_cast<size_t>(max_size_)) {
-            int fd = create_connection(timeout_ms);
-            if (fd >= 0) {
-                connections_.push_back({fd, Clock::now(), true});
-                return fd;
-            }
+        if (connections_.size() >= static_cast<size_t>(max_size_)) {
+            return -1;
         }
 
-        return -1;
+        // Establish the connection without holding the lock — connect() is
+        // a blocking syscall, and serializing every concurrent pool-growth
+        // event through this mutex stalls unrelated acquire()/release()
+        // calls and manufactures bursts of correlated timeouts under load
+        // that look like real backend failures but are really lock
+        // contention here.
+        lock.unlock();
+        int fd = create_connection(timeout_ms);
+        lock.lock();
+
+        if (fd < 0) return -1;
+
+        if (connections_.size() >= static_cast<size_t>(max_size_)) {
+            // Pool filled up while we were connecting — don't exceed the cap.
+            close(fd);
+            return -1;
+        }
+
+        connections_.push_back({fd, Clock::now(), true});
+        if (was_reused) *was_reused = false;
+        return fd;
     }
 
     void release(int fd) {

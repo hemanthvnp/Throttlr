@@ -1,0 +1,27 @@
+{
+  "server": {
+    "host": "0.0.0.0",
+    "port": 8080,
+    "worker_threads": 0,
+    "max_connections": 10000,
+    "jwt_secret": "bench-secret"
+  },
+  "rate_limit": {
+    "enabled": false,
+    "requests": 1000000,
+    "window_seconds": 60,
+    "key_type": "ip"
+  },
+  "cors": {
+    "enabled": true,
+    "origins": ["*"]
+  },
+  "backends": [
+    {"name": "backend1", "host": "gw-b1", "port": 80, "weight": 1},
+    {"name": "backend2", "host": "gw-b2", "port": 80, "weight": 1},
+    {"name": "backend3", "host": "gw-b3", "port": 80, "weight": 1}
+  ],
+  "routes": [
+    {"name": "public", "path": "/.*", "backend": "default", "auth_required": false}
+  ]
+}

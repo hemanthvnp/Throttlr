@@ -16,10 +16,16 @@ public:
         std::unique_ptr<ConnectionPool>  pool;
         std::unique_ptr<CircuitBreaker>  circuit;
         std::atomic<bool>                healthy{true};
+        std::atomic<int>                 health_fail_streak{0};
         std::atomic<int>                 active_requests{0};
         std::atomic<uint64_t>            total_requests{0};
         std::atomic<uint64_t>            failed_requests{0};
     };
+
+    void set_circuit_breaker_config(const CircuitBreakerConfig& cfg) {
+        std::lock_guard lock(mutex_);
+        cb_config_ = cfg;
+    }
 
     void add_backend(const std::string& group, const BackendConfig& config) {
         std::lock_guard lock(mutex_);
@@ -27,7 +33,7 @@ public:
         auto backend        = std::make_shared<Backend>();
         backend->config     = config;
         backend->pool       = std::make_unique<ConnectionPool>(config.host, config.port, config.max_connections);
-        backend->circuit    = std::make_unique<CircuitBreaker>(5, 2, std::chrono::seconds(30));
+        backend->circuit    = make_circuit_breaker();
 
         backends_[group].push_back(backend);
     }
@@ -51,7 +57,7 @@ public:
                 auto backend     = std::make_shared<Backend>();
                 backend->config  = config;
                 backend->pool    = std::make_unique<ConnectionPool>(config.host, config.port, config.max_connections);
-                backend->circuit = std::make_unique<CircuitBreaker>(5, 2, std::chrono::seconds(30));
+                backend->circuit = make_circuit_breaker();
                 new_backends.push_back(backend);
             }
         }
@@ -166,6 +172,14 @@ public:
     }
 
 private:
+    // Callers (add_backend/set_backends) already hold mutex_ — do not lock here.
+    std::unique_ptr<CircuitBreaker> make_circuit_breaker() {
+        return std::make_unique<CircuitBreaker>(
+            cb_config_.failure_threshold,
+            cb_config_.success_threshold,
+            std::chrono::milliseconds(cb_config_.open_timeout_ms));
+    }
+
     // FNV-1a 32-bit hash — fast, good distribution for ring placement
     static uint32_t fnv1a(const std::string& s) {
         uint32_t h = 2166136261u;
@@ -190,5 +204,6 @@ private:
     std::unordered_map<std::string, size_t>                                indices_;
     std::map<uint32_t, std::shared_ptr<Backend>>                           ring_;  // sorted for binary search
     std::string                                                             strategy_{"round_robin"};
+    CircuitBreakerConfig                                                    cb_config_;
     mutable std::mutex                                                      mutex_;
 };

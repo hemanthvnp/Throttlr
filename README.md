@@ -55,23 +55,30 @@ for i in $(seq 1 105); do curl -s -o /dev/null -w "%{http_code}\n" https://throt
 
 ## Performance
 
-Benchmarked on a 4-core / 16 GB machine (`wrk -t4 -c400 -d30s`):
+Benchmarked in Docker (24 vCPU / ~7.6 GB VM — a Docker Desktop host, not
+dedicated hardware), gateway proxying to nginx backends with the rate
+limiter's Redis/Lua path active. Reproducible via `bench/run_benchmark.sh`;
+full methodology and root-cause notes in `bench/RESULTS.md`.
+
+`wrk -t4 -c400 -d30s`, zero non-2xx/3xx responses out of 857,345 requests:
 
 | Metric | Value |
 |--------|-------|
-| Throughput | 50,000+ req/s |
-| P50 latency | ~300 µs |
-| P99 latency | ~1.8 ms |
-| RSS (idle) | ~20 MB |
-| RSS (load) | ~95 MB |
+| Throughput | 28,548 req/s |
+| P50 latency | 647 µs |
+| P99 latency | 2.82 ms |
 
-Component micro-benchmarks (Google Benchmark):
-
-```
-BM_TokenBucket    45 ns/op
-BM_RouterMatch   189 ns/op
-BM_ConnPool      124 ns/op
-```
+An earlier version of this table claimed 50,000+ req/s / 1.8ms P99 on
+"4-core/16GB" hardware and a set of Google Benchmark micro-benchmark
+numbers. Neither was backed by a script, CI run, or logged output anywhere
+in the repo, and re-running the same `wrk` parameters against an
+unmodified build showed why: the circuit breaker was fast-failing ~100%
+of requests as 503s in microseconds, which inflates apparent req/s
+without proxying anything. `bench/RESULTS.md` documents the five bugs
+behind that (a stale-connection race, an unbounded circuit-breaker
+half-open state, an asymmetric half-open failure rule, a pool lock held
+across a blocking syscall, and dead circuit-breaker config) and the fixes
+applied for this table.
 
 ---
 

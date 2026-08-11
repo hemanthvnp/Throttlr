@@ -33,6 +33,15 @@ struct RouteConfig {
     std::map<std::string, std::string> add_headers;
 };
 
+struct CircuitBreakerConfig {
+    int failure_threshold = 5;
+    int success_threshold = 2;
+    // Kept short by default: a breaker trip should shed load away from a
+    // genuinely failing backend for a moment, not lock it out for tens of
+    // seconds over a handful of transient errors under concurrent load.
+    int open_timeout_ms   = 3000;
+};
+
 struct RateLimitConfig {
     bool        enabled              = true;
     bool        tls_enabled          = false;
@@ -71,6 +80,9 @@ struct Config {
 
     // Rate limiting
     RateLimitConfig rate_limit;
+
+    // Circuit breaker
+    CircuitBreakerConfig circuit_breaker;
 
     // CORS
     bool cors_enabled                  = true;
@@ -147,6 +159,14 @@ struct Config {
                     cfg.rate_limit.requests_per_second = static_cast<double>(requests) / static_cast<double>(window);
                     cfg.rate_limit.burst_size          = requests;
                 }
+            }
+
+            // Circuit breaker
+            if (j.contains("circuit_breaker")) {
+                auto& cb = j["circuit_breaker"];
+                cfg.circuit_breaker.failure_threshold = cb.value("failure_threshold", cfg.circuit_breaker.failure_threshold);
+                cfg.circuit_breaker.success_threshold = cb.value("success_threshold", cfg.circuit_breaker.success_threshold);
+                cfg.circuit_breaker.open_timeout_ms   = cb.value("open_timeout_ms",   cfg.circuit_breaker.open_timeout_ms);
             }
 
             // CORS

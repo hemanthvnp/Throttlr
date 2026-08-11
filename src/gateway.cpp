@@ -48,6 +48,7 @@ Gateway::Gateway(Config config)
     }
 
     // Initialize backends
+    load_balancer_.set_circuit_breaker_config(config_.circuit_breaker);
     for (const auto& backend : config_.backends) {
         load_balancer_.add_backend(backend.group, backend);
     }
@@ -181,6 +182,7 @@ void Gateway::reload_config(const std::string& path) {
         for (const auto& route : new_cfg.routes) router_.add_route(route);
 
         // Update backends (preserves pools/circuit-breakers for unchanged hosts)
+        load_balancer_.set_circuit_breaker_config(new_cfg.circuit_breaker);
         load_balancer_.set_backends("default", new_cfg.backends);
         load_balancer_.set_strategy(new_cfg.lb_strategy);
 
@@ -434,15 +436,6 @@ HttpResponse Gateway::proxy_request(HttpRequest& request, const RouteConfig& rou
     backend->active_requests++;
     backend->total_requests++;
 
-    // Acquire connection from pool
-    int conn_fd = backend->pool->acquire(CONNECTION_TIMEOUT_MS);
-    if (conn_fd < 0) {
-        backend->active_requests--;
-        backend->failed_requests++;
-        backend->circuit->record_failure();
-        return HttpResponse::service_unavailable("Connection failed");
-    }
-
     // Prepare request for backend
     HttpRequest backend_request = request;
     if (route.auth_required) {
@@ -477,86 +470,125 @@ HttpResponse Gateway::proxy_request(HttpRequest& request, const RouteConfig& rou
         backend_request.set_header(k, v);
     }
 
-    // Send request to backend
     std::string request_data = backend_request.serialize();
-    ssize_t sent = send(conn_fd, request_data.c_str(), request_data.size(), 0);
-    if (sent < 0) {
-        backend->pool->invalidate(conn_fd);
-        backend->active_requests--;
-        backend->failed_requests++;
-        backend->circuit->record_failure();
-        return HttpResponse::bad_gateway("Failed to send request to backend");
-    }
 
-    // Read response from backend
+    // Acquire a connection and send/read against it. Pooled keep-alive
+    // connections can be closed by the peer at any point after
+    // ConnectionPool::acquire's MSG_PEEK liveness check races it, so the
+    // first sign of that is send() or the very first read() failing
+    // instantly on a *reused* connection with zero bytes ever received.
+    // That's a stale-connection artifact, not a backend failure — it gets
+    // one transparent retry on a fresh connection before it's reported as
+    // an error or counted against the circuit breaker. A failure on a
+    // freshly-created connection, or a second failure after the retry, is
+    // treated as real and handled exactly as before.
+    int conn_fd = -1;
     std::string response_data;
     char buf[BUFFER_SIZE];
+    std::optional<Stream> backend_stream_opt;
 
-    // Set read timeout
-    timeval tv{route.timeout_ms / 1000, (route.timeout_ms % 1000) * 1000};
-    setsockopt(conn_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-
-    Stream backend_stream(conn_fd, backend->config.tls_enabled ? SSL_new(client_ctx_) : nullptr);
-    if (backend_stream.ssl) {
-        SSL_set_fd(backend_stream.ssl, conn_fd);
-        SSL_connect(backend_stream.ssl);
-    }
-
-    while (true) {
-        ssize_t n = backend_stream.read(buf, sizeof(buf));
-        if (n < 0) {
-            if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                // Timeout
-                backend->pool->invalidate(conn_fd);
-                backend->active_requests--;
-                backend->failed_requests++;
-                backend->circuit->record_failure();
-                return HttpResponse::gateway_timeout();
-            }
-            break;
+    for (int attempt = 0; attempt < 2; ++attempt) {
+        bool was_reused = false;
+        conn_fd = backend->pool->acquire(CONNECTION_TIMEOUT_MS, &was_reused);
+        if (conn_fd < 0) {
+            backend->active_requests--;
+            backend->failed_requests++;
+            backend->circuit->record_failure();
+            return HttpResponse::service_unavailable("Connection failed");
         }
-        if (n == 0) break;
 
-        response_data.append(buf, static_cast<size_t>(n));
+        bool can_retry = was_reused && attempt == 0;
 
-        // Simple check: if we have headers and body, we're done
-        if (response_data.find("\r\n\r\n") != std::string::npos) {
-            auto header_end    = response_data.find("\r\n\r\n");
-            std::string headers       = response_data.substr(0, header_end);
-            std::string headers_lower = headers;
-            std::transform(headers_lower.begin(), headers_lower.end(),
-                           headers_lower.begin(), ::tolower);
+        ssize_t sent = send(conn_fd, request_data.c_str(), request_data.size(), 0);
+        if (sent < 0) {
+            backend->pool->invalidate(conn_fd);
+            if (can_retry) continue;
+            backend->active_requests--;
+            backend->failed_requests++;
+            backend->circuit->record_failure();
+            return HttpResponse::bad_gateway("Failed to send request to backend");
+        }
 
-            // Check for Content-Length (case-insensitive)
-            auto cl_pos = headers_lower.find("content-length:");
-            if (cl_pos != std::string::npos) {
-                auto        cl_end    = headers_lower.find("\r\n", cl_pos);
-                std::string cl_value  = headers.substr(cl_pos + 15, cl_end - cl_pos - 15);
-                // Trim whitespace
-                size_t start = cl_value.find_first_not_of(" \t");
-                if (start != std::string::npos) {
-                    cl_value = cl_value.substr(start);
-                }
-                size_t content_length = std::stoull(cl_value);
-                size_t body_received  = response_data.size() - header_end - 4;
+        response_data.clear();
 
-                if (body_received >= content_length) break;
-            } else if (headers_lower.find("http/1.0") != std::string::npos ||
-                       headers_lower.find("connection: close") != std::string::npos) {
-                // HTTP/1.0 or Connection: close — keep reading until EOF
-                continue;
-            } else {
-                // Try one more blocking read with short timeout
-                timeval short_tv{0, 100000};  // 100ms
-                setsockopt(conn_fd, SOL_SOCKET, SO_RCVTIMEO, &short_tv, sizeof(short_tv));
-                ssize_t extra = backend_stream.read(buf, sizeof(buf));
-                if (extra > 0) {
-                    response_data.append(buf, static_cast<size_t>(extra));
-                }
+        // Set read timeout
+        timeval tv{route.timeout_ms / 1000, (route.timeout_ms % 1000) * 1000};
+        setsockopt(conn_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+
+        backend_stream_opt.emplace(conn_fd, backend->config.tls_enabled ? SSL_new(client_ctx_) : nullptr);
+        Stream& backend_stream = *backend_stream_opt;
+        if (backend_stream.ssl) {
+            SSL_set_fd(backend_stream.ssl, conn_fd);
+            SSL_connect(backend_stream.ssl);
+        }
+
+        bool timed_out = false;
+        while (true) {
+            ssize_t n = backend_stream.read(buf, sizeof(buf));
+            if (n < 0) {
+                if (errno == EAGAIN || errno == EWOULDBLOCK) timed_out = true;
                 break;
             }
+            if (n == 0) break;
+
+            response_data.append(buf, static_cast<size_t>(n));
+
+            // Simple check: if we have headers and body, we're done
+            if (response_data.find("\r\n\r\n") != std::string::npos) {
+                auto header_end    = response_data.find("\r\n\r\n");
+                std::string headers       = response_data.substr(0, header_end);
+                std::string headers_lower = headers;
+                std::transform(headers_lower.begin(), headers_lower.end(),
+                               headers_lower.begin(), ::tolower);
+
+                // Check for Content-Length (case-insensitive)
+                auto cl_pos = headers_lower.find("content-length:");
+                if (cl_pos != std::string::npos) {
+                    auto        cl_end    = headers_lower.find("\r\n", cl_pos);
+                    std::string cl_value  = headers.substr(cl_pos + 15, cl_end - cl_pos - 15);
+                    // Trim whitespace
+                    size_t start = cl_value.find_first_not_of(" \t");
+                    if (start != std::string::npos) {
+                        cl_value = cl_value.substr(start);
+                    }
+                    size_t content_length = std::stoull(cl_value);
+                    size_t body_received  = response_data.size() - header_end - 4;
+
+                    if (body_received >= content_length) break;
+                } else if (headers_lower.find("http/1.0") != std::string::npos ||
+                           headers_lower.find("connection: close") != std::string::npos) {
+                    // HTTP/1.0 or Connection: close — keep reading until EOF
+                    continue;
+                } else {
+                    // Try one more blocking read with short timeout
+                    timeval short_tv{0, 100000};  // 100ms
+                    setsockopt(conn_fd, SOL_SOCKET, SO_RCVTIMEO, &short_tv, sizeof(short_tv));
+                    ssize_t extra = backend_stream.read(buf, sizeof(buf));
+                    if (extra > 0) {
+                        response_data.append(buf, static_cast<size_t>(extra));
+                    }
+                    break;
+                }
+            }
         }
+
+        if (timed_out) {
+            backend->pool->invalidate(conn_fd);
+            backend->active_requests--;
+            backend->failed_requests++;
+            backend->circuit->record_failure();
+            return HttpResponse::gateway_timeout();
+        }
+
+        if (response_data.empty() && can_retry) {
+            backend->pool->invalidate(conn_fd);
+            continue;
+        }
+
+        break;
     }
+
+    Stream& backend_stream = *backend_stream_opt;
 
     // Parse response
     auto response = HttpResponse::parse(response_data);
@@ -705,12 +737,35 @@ std::string Gateway::get_rate_limit_key(const HttpRequest& request) {
 // ============================================================================
 
 void Gateway::health_check_loop() {
+    // A backend is only marked down after HEALTH_FAIL_THRESHOLD consecutive
+    // failed checks, but marked back up on the first success ("fail slow,
+    // recover fast"). check_backend_health() opens its own plain socket,
+    // independent of the connection pool used for real traffic, and its
+    // single blocking attempt can be delayed by ordinary transient
+    // congestion under load — treating one bad tick as gospel took every
+    // backend offline at once whenever that happened to line up across all
+    // of them in the same round, which is exactly the kind of cascade from
+    // a transient blip this loop should be absorbing, not amplifying.
+    constexpr int HEALTH_FAIL_THRESHOLD = 3;
+
     while (running_) {
         for (auto& backend : load_balancer_.all_backends()) {
-            bool healthy = check_backend_health(backend->config);
+            bool check_ok = check_backend_health(backend->config);
+            bool healthy;
+
+            bool was_healthy = backend->healthy.load();
+
+            if (check_ok) {
+                backend->health_fail_streak = 0;
+                healthy = true;
+            } else {
+                int streak = ++backend->health_fail_streak;
+                healthy = was_healthy && streak < HEALTH_FAIL_THRESHOLD;
+            }
+
             load_balancer_.set_health(backend->config.name, healthy);
 
-            if (healthy != backend->healthy.load()) {
+            if (healthy != was_healthy) {
                 spdlog::info("Backend {} is now {}",
                     backend->config.name, healthy ? "UP" : "DOWN");
             }
